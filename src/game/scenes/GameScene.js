@@ -405,6 +405,12 @@ export default class GameScene extends Phaser.Scene {
     saveHighScore(stats.score);
     this.achievementManager.check(stats);
     this.upgradeManager.addXP(stats.xp);
-    this.time.delayedCall(1000, () => this.scene.start('GameOverScene', { ...stats, totalXP: this.upgradeManager.totalXP, dailyAchieved: this.dailyManager.dailyCompleted, dailyTarget: this.dailyManager.dailyTarget }));
+    this.time.delayedCall(1000, () => this.scene.start('GameOverScene', { 
+        ...stats, 
+        level: this.levelManager.level,
+        totalXP: this.upgradeManager.totalXP, 
+        dailyAchieved: this.dailyManager.dailyCompleted, 
+        dailyTarget: this.dailyManager.dailyTarget 
+    }));
   }
 }

@@ -217,7 +217,9 @@ export default class MenuScene extends Phaser.Scene {
         if (entries) {
             entries.slice(0, 10).forEach((e, i) => {
               const y = -panelH / 2 + 80 + i * 30;
-              const txt = this.add.text(-panelW/2 + 30, y, `${i+1}. ${e.username.slice(0, 12).padEnd(14)} ${e.score.toLocaleString().padStart(10)}`, { fontSize: '14px', fontFamily: 'monospace', color: '#fff' });
+              const name = String(e?.username || 'Anonymous').slice(0, 12);
+              const score = Number(e?.score || 0).toLocaleString();
+              const txt = this.add.text(-panelW/2 + 30, y, `${i+1}. ${name.padEnd(14)} ${score.padStart(10)}`, { fontSize: '14px', fontFamily: 'monospace', color: '#fff' });
               panel.add(txt);
             });
         }

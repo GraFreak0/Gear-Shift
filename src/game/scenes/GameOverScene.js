@@ -21,9 +21,7 @@ export default class GameOverScene extends Phaser.Scene {
     const { width, height } = this.cameras.main;
     this.layout();
     
-    // Auto-submit score to global leaderboard if authenticated
-    const lb = new LeaderboardManager();
-    lb.submitScore(this.finalScore);
+    this.cameras.main.fadeIn(500);
 
     this.scale.on('resize', () => {
         this.layout();
