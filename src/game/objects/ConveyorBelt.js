@@ -23,8 +23,9 @@ export default class ConveyorBelt extends Phaser.GameObjects.Container {
     this.path = path;
   }
 
-  update(delta) {
-    this.scrollOffset += this.scrollSpeed * delta * 0.05;
+  update(delta, currentSpeed) {
+    if (currentSpeed !== undefined) this.scrollSpeed = currentSpeed;
+    this.scrollOffset += this.scrollSpeed * (delta / 1000);
     
     const g = this.graphics;
     g.clear();

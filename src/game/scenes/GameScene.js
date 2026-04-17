@@ -187,16 +187,19 @@ export default class GameScene extends Phaser.Scene {
     const path = new Phaser.Curves.Path(-150, BELT_Y);
     
     if (type === 'ZIGZAG') {
-      path.lineTo(width * 0.25, BELT_Y - 60);
-      path.lineTo(width * 0.5, BELT_Y + 60);
-      path.lineTo(width * 0.75, BELT_Y - 60);
-      path.lineTo(width + 200, BELT_Y);
+      // Smooth curve instead of sharp angles
+      path.splineTo([
+        width * 0.25, BELT_Y - 40,
+        width * 0.5, BELT_Y + 40,
+        width * 0.75, BELT_Y - 40,
+        width + 200, BELT_Y
+      ]);
     } else if (type === 'WAVE') {
       path.splineTo([
-        width * 0.2, BELT_Y + 80,
-        width * 0.4, BELT_Y - 80,
-        width * 0.6, BELT_Y + 80,
-        width * 0.8, BELT_Y - 80,
+        width * 0.2, BELT_Y + 70,
+        width * 0.4, BELT_Y - 70,
+        width * 0.6, BELT_Y + 70,
+        width * 0.8, BELT_Y - 70,
         width + 200, BELT_Y
       ]);
     } else {
@@ -818,7 +821,7 @@ export default class GameScene extends Phaser.Scene {
   // ─── MACHINE LOST ───────────────────────────────────────────────────────────
 
   onMachineLost(machine) {
-    if (!this.gameRunning || machine.isDestroyed) return;
+    if (!this.gameRunning) return;
     this.scoreManager.onMachineLost();
     this.levelManager.onMachineProcessed();
     this.consecutiveFixes = 0; // break chain
@@ -884,15 +887,16 @@ export default class GameScene extends Phaser.Scene {
     if (!this.gameRunning || this.paused) return;
 
     this.elapsedMs += delta;
-    this.conveyorBelt.update(delta);
-
-    // Environment events
-    const envEvt = this.envManager.update(this.elapsedMs, this.levelManager.level);
-
+    
     // Belt speed with all modifiers
     const baseBeltSpeed = this.levelManager.getBeltSpeed();
     const envSpeed = this.envManager.getBeltSpeed(baseBeltSpeed);
     const beltSpeed = this.freezeActive ? 0 : this.slowmoActive ? envSpeed * 0.4 : envSpeed;
+
+    this.conveyorBelt.update(delta, beltSpeed);
+
+    // Environment events
+    const envEvt = this.envManager.update(this.elapsedMs, this.levelManager.level);
 
     // Distance-based spawning (length of path used for more accurate spacing)
     const pathLength = this.beltPath.getLength();
