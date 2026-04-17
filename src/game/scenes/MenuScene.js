@@ -14,263 +14,29 @@ export default class MenuScene extends Phaser.Scene {
   }
 
   create() {
-    const { width, height } = this.cameras.main;
-
     this.daily = new DailyManager();
     this.themeManager = new ThemeManager();
-    this.leaderboard = LeaderboardManager.getEntries();
+    this.leaderboardManager = new LeaderboardManager();
     this.showingLeaderboard = false;
 
-    this.createBackground(width, height);
-    this.buildMainMenu(width, height);
-    this.buildThemeSelector(width, height);
+    this.layout();
 
-    // Decode challenge from URL
-    this.challengeData = LeaderboardManager.decodeChallenge();
+    this.scale.on('resize', () => {
+      this.layout();
+    });
 
     this.cameras.main.fadeIn(400);
   }
 
-  buildMainMenu(width, height) {
-    // Definitive vertical layout (800x600 canvas)
-    const pos = {
-      title: 70,
-      desc: 145,
-      score: 215,
-      streak: 245,
-      challenge: 275,
-      play: 335,
-      secBtns: 410,
-      upgrades: 470,
-      theme: 525,
-      banner: 565,
-      badges: 588
-    };
-
-    // Title
-    this.add.text(width / 2, pos.title, '⚙ GEARWORKS ⚙', {
-      fontSize: '52px', fontFamily: 'monospace', color: '#ffcc44',
-      stroke: '#000000', strokeThickness: 8,
-      shadow: { offsetX: 3, offsetY: 3, color: '#aa8800', blur: 0, fill: true },
-    }).setOrigin(0.5);
-
-    this.add.text(width / 2, pos.desc, 'Fix the machines before they\nfall off the conveyor belt!', {
-      fontSize: '18px', fontFamily: 'monospace', color: '#aaccff', align: 'center', lineSpacing: 8,
-    }).setOrigin(0.5);
-
-    // High score
-    const hs = loadHighScore();
-    this.add.text(width / 2, pos.score, `🏆 Best Score: ${hs.toLocaleString()}`, {
-      fontSize: '20px', fontFamily: 'monospace', color: '#ffee88',
-    }).setOrigin(0.5);
-
-    // Daily streak
-    const streakColor = this.daily.streak >= 7 ? '#ff8844' : this.daily.streak >= 3 ? '#ffcc44' : '#aaaacc';
-    this.add.text(width / 2, pos.streak, `🔥 ${this.daily.streak}-day streak   ${this.daily.dailyCompleted ? '✅ Daily done!' : '🎯 Daily: ' + this.daily.dailyTarget.toLocaleString() + ' pts'}`, {
-      fontSize: '14px', fontFamily: 'monospace', color: streakColor,
-    }).setOrigin(0.5);
-
-    // Challenge badge
-    if (this.challengeData) {
-      this.add.text(width / 2, pos.challenge, `⚡ CHALLENGE from ${this.challengeData.name}: BEAT ${this.challengeData.score.toLocaleString()}`, {
-        fontSize: '12px', fontFamily: 'monospace', color: '#ff88ff', backgroundColor: '#110022',
-      }).setOrigin(0.5).setPadding(8, 4);
-    }
-
-    // Play button
-    const playBtn = this.add.container(width / 2, pos.play);
-    const btnBg = this.add.rectangle(0, 0, 240, 60, 0x224488, 1).setStrokeStyle(2, 0x4488ff);
-    const btnText = this.add.text(0, 0, '▶  PLAY', { fontSize: '28px', fontFamily: 'monospace', color: '#ffffff', fontWeight: 'bold' }).setOrigin(0.5);
-    playBtn.add([btnBg, btnText]);
-    playBtn.setSize(240, 60);
-    playBtn.setInteractive({ useHandCursor: true });
-    playBtn.on('pointerover', () => { btnBg.setFillStyle(0x3355aa); this.tweens.add({ targets: playBtn, scaleX: 1.05, scaleY: 1.05, duration: 100 }); });
-    playBtn.on('pointerout', () => { btnBg.setFillStyle(0x224488); this.tweens.add({ targets: playBtn, scaleX: 1, scaleY: 1, duration: 100 }); });
-    playBtn.on('pointerdown', () => {
-      this.cameras.main.fade(300, 0, 0, 0);
-      this.time.delayedCall(320, () => this.scene.start('GameScene'));
-    });
-
-    // Secondary buttons row
-    const howBtn = this.add.container(width / 2 - 115, pos.secBtns);
-    const howBg = this.add.rectangle(0, 0, 210, 46, 0x222244, 1).setStrokeStyle(2, 0x334466);
-    const howText = this.add.text(0, 0, '❓  HOW TO PLAY', { fontSize: '15px', fontFamily: 'monospace', color: '#aaaacc' }).setOrigin(0.5);
-    howBtn.add([howBg, howText]);
-    howBtn.setSize(210, 46);
-    howBtn.setInteractive({ useHandCursor: true });
-    howBtn.on('pointerover', () => howBg.setFillStyle(0x333355));
-    howBtn.on('pointerout', () => howBg.setFillStyle(0x222244));
-    howBtn.on('pointerdown', () => this.scene.start('HowToPlayScene'));
-
-    const lbBtn = this.add.container(width / 2 + 115, pos.secBtns);
-    const lbBg = this.add.rectangle(0, 0, 210, 46, 0x222244, 1).setStrokeStyle(2, 0x334466);
-    const lbText = this.add.text(0, 0, '🏆  LEADERBOARD', { fontSize: '15px', fontFamily: 'monospace', color: '#ffee88' }).setOrigin(0.5);
-    lbBtn.add([lbBg, lbText]);
-    lbBtn.setSize(210, 46);
-    lbBtn.setInteractive({ useHandCursor: true });
-    lbBtn.on('pointerover', () => lbBg.setFillStyle(0x332200));
-    lbBtn.on('pointerout', () => lbBg.setFillStyle(0x222244));
-    lbBtn.on('pointerdown', () => this.showLeaderboardPanel(width, height));
-
-    // Upgrades button
-    const upgradeManager = new UpgradeManager();
-    const totalXP = upgradeManager.totalXP;
-    const upgrBtn = this.add.container(width / 2, pos.upgrades);
-    const uBg = this.add.rectangle(0, 0, 440, 46, 0x112233, 1).setStrokeStyle(1, 0x224488);
-    const uText = this.add.text(0, 0, `⚙ UPGRADES & ACHIEVEMENTS  (${totalXP} XP)`, { fontSize: '15px', fontFamily: 'monospace', color: '#88aaff' }).setOrigin(0.5);
-    upgrBtn.add([uBg, uText]);
-    upgrBtn.setSize(440, 46);
-    upgrBtn.setInteractive({ useHandCursor: true });
-    upgrBtn.on('pointerover', () => uBg.setFillStyle(0x1a3355));
-    upgrBtn.on('pointerout', () => uBg.setFillStyle(0x112233));
-    upgrBtn.on('pointerdown', () => this.scene.start('UpgradeScene', { sessionXP: 0 }));
-
-    // Platform badge
-    const mobile = this.registry.get('isMobile');
-    const platformLabel = mobile ? '📱 Mobile' : '🖥 PC';
-    this.add.text(width - 15, 15, platformLabel, {
-      fontSize: '11px', fontFamily: 'monospace', color: '#445566',
-    }).setOrigin(1, 0);
-
-    // Credits button
-    const creditBtn = this.add.container(width / 2, pos.badges);
-    const cBg = this.add.rectangle(0, 0, 140, 32, 0x111122, 1).setStrokeStyle(1, 0x334466);
-    const cText = this.add.text(0, 0, 'ℹ️  CREDITS', { fontSize: '12px', fontFamily: 'monospace', color: '#667788' }).setOrigin(0.5);
-    creditBtn.add([cBg, cText]);
-    creditBtn.setSize(140, 32);
-    creditBtn.setInteractive({ useHandCursor: true });
-    creditBtn.on('pointerover', () => cBg.setStrokeStyle(1, 0x556688));
-    creditBtn.on('pointerout', () => cBg.setStrokeStyle(1, 0x334466));
-    creditBtn.on('pointerdown', () => this.showCreditsPanel(width, height));
-
-    this.add.text(width / 2, height - 10, 'Version 1.0.0 — Open Source Edition', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#334455',
-    }).setOrigin(0.5);
-  }
-
-  buildThemeSelector(width, height) {
-    const t = this.themeManager.get();
-    const y = 525; // Matching pos.theme
-    this.add.text(width / 2, y - 22, '🎨 THEME', { fontSize: '11px', fontFamily: 'monospace', color: t.accentColor, fontWeight: 'bold' }).setOrigin(0.5);
-    const current = this.themeManager.get();
-    THEME_LIST.forEach((theme, i) => {
-      const x = width / 2 + (i - 1) * 135;
-      const isActive = theme.id === current.id;
-      const btn = this.add.text(x, y, `${theme.icon} ${theme.name}`, {
-        fontSize: '13px', fontFamily: 'monospace',
-        color: isActive ? '#ffffff' : '#8899aa',
-        backgroundColor: isActive ? t.hudBorder : '#111122',
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setPadding(10, 6);
-
-      if (isActive) {
-        btn.setStroke(t.accentColor, 2);
-      }
-
-      btn.on('pointerdown', () => {
-        this.themeManager.setTheme(theme.id);
-        this.scene.restart();
-      });
-      btn.on('pointerover', () => { if (!isActive) btn.setBackgroundColor('#222233'); });
-      btn.on('pointerout', () => { if (!isActive) btn.setBackgroundColor('#111122'); });
-    });
-
-    // Daily modifier banner - relative to theme
-    const dailyMod = new DailyModifierManager().get();
-    this.add.text(width / 2, y + 30, `${dailyMod.icon} TODAY: ${dailyMod.name} — ${dailyMod.desc}`, {
-      fontSize: '11px', fontFamily: 'monospace', color: '#ffcc44', backgroundColor: '#110a00',
-    }).setOrigin(0.5).setPadding(6, 3);
-  }
-
-
-
-  showCreditsPanel(width, height) {
-    const panel = this.add.container(width / 2, height / 2).setDepth(100);
-    const bg = this.add.rectangle(0, 0, 480, 260, 0x050510, 0.95).setStrokeStyle(2, 0x445577);
+  layout() {
+    if (!this.cameras || !this.cameras.main) return;
+    const { width, height } = this.cameras.main;
+    this.children.removeAll(); 
+    this.bgGears = [];
     
-    const title = this.add.text(0, -90, '⚙️ GEARWORKS: CREDITS', { fontSize: '24px', fontFamily: 'monospace', color: '#ffffff', fontWeight: 'bold' }).setOrigin(0.5);
-    const lead = this.add.text(0, -30, 'Lead Developer', { fontSize: '14px', fontFamily: 'monospace', color: '#667788' }).setOrigin(0.5);
-    const creator = this.add.text(0, 0, 'ISAIAH JOHNSON', { fontSize: '32px', fontFamily: 'monospace', color: '#ffcc44', fontWeight: 'bold' }).setOrigin(0.5);
-    const user = this.add.text(0, 35, '@grafreak0', { fontSize: '18px', fontFamily: 'monospace', color: '#88aaff' }).setOrigin(0.5);
-    
-    const desc = this.add.text(0, 80, 'Built with Phaser 3 & Open Source Love\n© 2026 Shift Games', { 
-        fontSize: '12px', fontFamily: 'monospace', color: '#445566', align: 'center' 
-    }).setOrigin(0.5);
-
-    const closeBtn = this.add.text(0, 115, '[ CLOSE ]', { fontSize: '14px', fontFamily: 'monospace', color: '#ffee88' }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    closeBtn.on('pointerdown', () => panel.destroy());
-    closeBtn.on('pointerover', () => closeBtn.setColor('#ffffff'));
-    closeBtn.on('pointerout', () => closeBtn.setColor('#ffee88'));
-
-    panel.add([bg, title, lead, creator, user, desc, closeBtn]);
-    panel.setScale(0);
-    this.tweens.add({ targets: panel, scaleX: 1, scaleY: 1, duration: 250, ease: 'Back.Out' });
-  }
-
-  showLeaderboardPanel(width, height) {
-    if (this.lbPanel) { this.lbPanel.destroy(); this.lbPanel = null; return; }
-
-    const panelW = 480, panelH = 380;
-    const panelX = width / 2 - panelW / 2;
-    const panelY = height / 2 - panelH / 2;
-
-    const panelBg = this.add.graphics();
-    panelBg.fillStyle(0x080818, 0.97);
-    panelBg.fillRoundedRect(panelX, panelY, panelW, panelH, 12);
-    panelBg.lineStyle(2, 0x334488);
-    panelBg.strokeRoundedRect(panelX, panelY, panelW, panelH, 12);
-
-    const title = this.add.text(width / 2, panelY + 24, '🏆 LOCAL LEADERBOARD', {
-      fontSize: '20px', fontFamily: 'monospace', color: '#ffcc44',
-    }).setOrigin(0.5);
-
-    const entries = this.leaderboard;
-    const rows = [];
-
-    if (entries.length === 0) {
-      rows.push(this.add.text(width / 2, panelY + 80, 'No scores yet — play to set one!', {
-        fontSize: '14px', fontFamily: 'monospace', color: '#445566',
-      }).setOrigin(0.5));
-    } else {
-      entries.forEach((e, i) => {
-        const y = panelY + 60 + i * 28;
-        const rank = i + 1;
-        const rankColor = rank === 1 ? '#ffcc44' : rank === 2 ? '#aaccff' : rank === 3 ? '#cc8844' : '#556677';
-        const row = this.add.text(panelX + 20, y, `#${rank}  ${e.name.padEnd(10)} ${String(e.score).padStart(8)}  Lv${e.level}  x${e.maxCombo}  ${e.date}`, {
-          fontSize: '12px', fontFamily: 'monospace', color: rankColor,
-        });
-        rows.push(row);
-      });
-    }
-
-    // Share challenge
-    const shareLabel = this.add.text(width / 2, panelY + panelH - 55, '⚡ Challenge a friend with your top score:', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#556677',
-    }).setOrigin(0.5);
-
-    const shareBtn = this.add.text(width / 2, panelY + panelH - 30, '📋 COPY CHALLENGE LINK', {
-      fontSize: '13px', fontFamily: 'monospace', color: '#88aaff', backgroundColor: '#111133',
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setPadding(8, 4);
-
-    shareBtn.on('pointerdown', () => {
-      if (entries.length === 0) return;
-      const top = entries[0];
-      const url = LeaderboardManager.encodeChallenge(top.name, top.score);
-      try {
-        navigator.clipboard.writeText(url);
-        shareBtn.setText('✅ COPIED!');
-        this.time.delayedCall(2000, () => shareBtn.setText('📋 COPY CHALLENGE LINK'));
-      } catch (e) {
-        shareBtn.setText(url.slice(0, 50) + '...');
-      }
-    });
-
-    const closeBtn = this.add.text(panelX + panelW - 16, panelY + 14, '✕', {
-      fontSize: '16px', fontFamily: 'monospace', color: '#778899',
-    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-    closeBtn.on('pointerdown', () => { this.lbPanel.destroy(); this.lbPanel = null; });
-
-    this.lbPanel = this.add.container(0, 0, [panelBg, title, shareLabel, shareBtn, closeBtn, ...rows]);
-    this.lbPanel.setDepth(60);
+    this.createBackground(width, height);
+    this.buildMainMenu(width, height);
+    this.buildThemeSelector(width, height);
   }
 
   createBackground(width, height) {
@@ -278,38 +44,64 @@ export default class MenuScene extends Phaser.Scene {
     const bg = this.add.graphics();
     bg.fillGradientStyle(t.bgTop, t.bgTop, t.bgBot, t.bgBot, 1);
     bg.fillRect(0, 0, width, height);
-    bg.lineStyle(1, t.gridColor, 0.5);
-    for (let x = 0; x < width; x += 40) bg.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 40) bg.lineBetween(0, y, width, y);
 
-    const gearColor = t.hudBorder;
+    // Grid
+    bg.lineStyle(1, t.gridColor, 0.4);
+    const step = width < 600 ? 50 : 80;
+    for (let x = 0; x < width; x += step) bg.lineBetween(x, 0, x, height);
+    for (let y = 0; y < height; y += step) bg.lineBetween(0, y, width, y);
 
-    const gearPositions = [
-      { x: 80, y: 80, size: 50, speed: 0.3 },
-      { x: width - 80, y: 80, size: 40, speed: -0.4 },
-      { x: 50, y: height - 80, size: 35, speed: 0.5 },
-      { x: width - 60, y: height - 90, size: 55, speed: -0.25 },
-      { x: width / 2 - 320, y: height / 2, size: 30, speed: 0.6 },
-      { x: width / 2 + 320, y: height / 2, size: 30, speed: -0.6 },
-    ];
+    // Create a lot of background gears for a "moving machine" feel
+    const isMobile = width < 600;
+    const gearCount = isMobile ? 8 : 15;
+    
+    for (let i = 0; i < gearCount; i++) {
+        const size = Phaser.Math.Between(isMobile ? 40 : 60, isMobile ? 80 : 150);
+        const x = Phaser.Math.Between(0, width);
+        const y = Phaser.Math.Between(0, height);
+        const speed = (Math.random() - 0.5) * 0.8;
+        
+        const g = this.add.graphics();
+        this.drawGearGraphic(g, x, y, size, t.hudBorder);
+        g.setAlpha(0.12);
+        this.bgGears.push({ graphic: g, x, y, size, speed, angle: Math.random() * 6, color: t.hudBorder });
+    }
 
-    this.bgGears = gearPositions.map(({ x, y, size, speed }) => {
-      const g = this.add.graphics();
-      this.drawGearGraphic(g, x, y, size, gearColor);
-      g.setAlpha(0.3);
-      return { graphic: g, x, y, size, speed, angle: 0, color: gearColor };
+    // Floating particles (dust/sparks)
+    this.particles = this.add.particles(0, 0, 'particle', {
+        x: { min: 0, max: width },
+        y: { min: 0, max: height },
+        quantity: 1,
+        frequency: isMobile ? 800 : 400,
+        lifespan: 4000,
+        speedX: { min: -10, max: 10 },
+        speedY: { min: -20, max: -5 },
+        scale: { start: 0.5, end: 0 },
+        alpha: { start: 0.3, end: 0 },
+        blendMode: 'ADD'
     });
   }
 
   drawGearGraphic(g, x, y, size, color) {
     g.fillStyle(color);
+    // Gear teeth
+    const teeth = 12;
+    for (let i = 0; i < teeth; i++) {
+      const a = (i / teeth) * Math.PI * 2;
+      const tx = x + Math.cos(a) * size;
+      const ty = y + Math.sin(a) * size;
+      g.fillCircle(tx, ty, size * 0.2);
+    }
+    // Main plate
     g.fillCircle(x, y, size);
+    // Inner hole
     g.fillStyle(0x0a0a1a);
-    g.fillCircle(x, y, size * 0.5);
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      g.fillStyle(color);
-      g.fillRect(x + Math.cos(a) * size * 0.7 - 4, y + Math.sin(a) * size * 0.7 - 4, 8, 8);
+    g.fillCircle(x, y, size * 0.45);
+    // Spokes
+    g.lineStyle(size * 0.1, color, 1);
+    for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2;
+        g.lineBetween(x, y, x + Math.cos(a) * size * 0.8, y + Math.sin(a) * size * 0.8);
     }
   }
 
@@ -320,5 +112,126 @@ export default class MenuScene extends Phaser.Scene {
       gear.graphic.setAngle(Phaser.Math.RadToDeg(gear.angle));
       this.drawGearGraphic(gear.graphic, gear.x, gear.y, gear.size, gear.color);
     });
+  }
+
+  buildMainMenu(width, height) {
+    const isMobile = width < 600;
+    const spacing = height / 12;
+    const startY = height * 0.12;
+    
+    // Title
+    this.add.text(width / 2, startY, '⚙ GEARWORKS ⚙', {
+      fontSize: isMobile ? '42px' : '64px', fontFamily: 'monospace', color: '#ffcc44',
+      stroke: '#000000', strokeThickness: isMobile ? 6 : 10,
+      shadow: { offsetX: 4, offsetY: 4, color: '#aa8800', blur: 0, fill: true },
+    }).setOrigin(0.5);
+
+    this.add.text(width / 2, startY + spacing * 1.5, 'The Ultimate Factory Simulator', {
+      fontSize: isMobile ? '12px' : '16px', fontFamily: 'monospace', color: '#8899aa', letterSpacing: 4
+    }).setOrigin(0.5);
+
+    // High score
+    const hs = loadHighScore();
+    this.add.text(width / 2, startY + spacing * 2.8, `🏆 GLOBAL RECORD: ${hs.toLocaleString()}`, {
+      fontSize: isMobile ? '18px' : '22px', fontFamily: 'monospace', color: '#ffee88', fontWeight: 'bold'
+    }).setOrigin(0.5);
+
+    // Buttons
+    const playBtn = this.add.container(width / 2, startY + spacing * 4.8);
+    const btnW = isMobile ? 220 : 300, btnH = isMobile ? 60 : 75;
+    const btnBg = this.add.rectangle(0, 0, btnW, btnH, 0x224488, 1).setStrokeStyle(3, 0x4488ff);
+    const btnText = this.add.text(0, 0, '▶ START PRODUCTION', { fontSize: isMobile ? '18px' : '24px', fontFamily: 'monospace', color: '#ffffff', fontWeight: 'bold' }).setOrigin(0.5);
+    playBtn.add([btnBg, btnText]);
+    playBtn.setSize(btnW, btnH);
+    playBtn.setInteractive({ useHandCursor: true });
+    playBtn.on('pointerdown', () => {
+      this.cameras.main.fade(300, 0, 0, 0);
+      this.time.delayedCall(320, () => this.scene.start('GameScene'));
+    });
+
+    // Sub-buttons
+    const subY = isMobile ? startY + spacing * 6.5 : startY + spacing * 6.5;
+    const upgradeY = isMobile ? startY + spacing * 8.0 : startY + spacing * 7.8;
+
+    const lbBtn = this.add.container(width / 2 - (isMobile ? 0 : 160), subY);
+    const lbBg = this.add.rectangle(0, 0, isMobile ? 320 : 280, 50, 0x222244, 1).setStrokeStyle(2, 0x334466);
+    const lbText = this.add.text(0, 0, '🏆 LEADERBOARD', { fontSize: isMobile ? '14px' : '16px', color: '#ffee88' }).setOrigin(0.5);
+    lbBtn.add([lbBg, lbText]);
+    lbBtn.setSize(isMobile ? 320 : 280, 50);
+    lbBtn.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.showLeaderboardPanel(width, height));
+
+    const howBtn = this.add.container(width / 2 + (isMobile ? 0 : 160), isMobile ? subY + 60 : subY);
+    const howBg = this.add.rectangle(0, 0, isMobile ? 320 : 280, 50, 0x222244, 1).setStrokeStyle(2, 0x334466);
+    const howText = this.add.text(0, 0, '❓ HOW TO PLAY', { fontSize: isMobile ? '14px' : '16px', color: '#aaaacc' }).setOrigin(0.5);
+    howBtn.add([howBg, howText]);
+    howBtn.setSize(isMobile ? 320 : 280, 50);
+    howBtn.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.scene.start('HowToPlayScene'));
+
+    const upgrBtn = this.add.container(width / 2, upgradeY);
+    const uBg = this.add.rectangle(0, 0, isMobile ? 320 : 600, 50, 0x112233, 1).setStrokeStyle(2, 0x224488);
+    const uText = this.add.text(0, 0, `⚙ UPGRADES & TECHNOLOGY`, { fontSize: isMobile ? '14px' : '18px', color: '#88aaff' }).setOrigin(0.5);
+    upgrBtn.add([uBg, uText]);
+    upgrBtn.setSize(isMobile ? 320 : 600, 50);
+    upgrBtn.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.scene.start('UpgradeScene', { sessionXP: 0 }));
+
+    // Credits
+    const creditBtn = this.add.text(width / 2, height - 60, 'ℹ️  ISAIAH JOHNSON  /  @grafreak0', { fontSize: '11px', color: '#667788' }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    creditBtn.on('pointerdown', () => this.showCreditsPanel(width, height));
+  }
+
+  buildThemeSelector(width, height) {
+    const t = this.themeManager.get();
+    const isMobile = width < 600;
+    const y = isMobile ? height * 0.88 : height * 0.85;
+    
+    THEME_LIST.forEach((theme, i) => {
+      const x = width / 2 + (i - 1) * (isMobile ? 120 : 180);
+      const isActive = theme.id === t.id;
+      const btn = this.add.text(x, y, isMobile ? theme.icon : `${theme.icon} ${theme.name}`, {
+        fontSize: isMobile ? '24px' : '16px', fontFamily: 'monospace',
+        color: isActive ? '#ffffff' : '#8899aa',
+        backgroundColor: isActive ? t.hudBorder : '#111122',
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setPadding(20, 10);
+
+      btn.on('pointerdown', () => {
+        this.themeManager.setTheme(theme.id);
+        this.layout();
+      });
+    });
+  }
+
+  async showLeaderboardPanel(width, height) {
+    const isMobile = width < 600;
+    const panelW = isMobile ? width * 0.95 : 520, panelH = isMobile ? height * 0.75 : 420;
+    const panel = this.add.container(width / 2, height / 2).setDepth(200);
+    const bg = this.add.rectangle(0, 0, panelW, panelH, 0x050510, 0.98).setStrokeStyle(2, 0x445577);
+    const title = this.add.text(0, -panelH / 2 + 30, '🏆 GLOBAL LEADERBOARD', { fontSize: '20px', fontFamily: 'monospace', color: '#ffcc44', fontWeight: 'bold' }).setOrigin(0.5);
+    const loading = this.add.text(0, 0, 'Fetching scores...', { fontSize: '14px', color: '#ffffff' }).setOrigin(0.5);
+    const closeBtn = this.add.text(panelW/2 - 20, -panelH/2 + 20, '✕', { fontSize: '24px', color: '#ffffff' }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    closeBtn.on('pointerdown', () => panel.destroy());
+    panel.add([bg, title, loading, closeBtn]);
+    
+    try {
+        const entries = await this.leaderboardManager.getGlobal();
+        loading.destroy();
+        if (entries) {
+            entries.slice(0, 10).forEach((e, i) => {
+              const y = -panelH / 2 + 80 + i * 30;
+              const txt = this.add.text(-panelW/2 + 30, y, `${i+1}. ${e.username.slice(0, 12).padEnd(14)} ${e.score.toLocaleString().padStart(10)}`, { fontSize: '14px', fontFamily: 'monospace', color: '#fff' });
+              panel.add(txt);
+            });
+        }
+    } catch(e) { loading.setText('Offline Mode'); }
+  }
+
+  showCreditsPanel(width, height) {
+    const panel = this.add.container(width / 2, height / 2).setDepth(200);
+    const bg = this.add.rectangle(0, 0, 480, 260, 0x050510, 0.98).setStrokeStyle(2, 0x445577);
+    const creator = this.add.text(0, 0, 'ISAIAH JOHNSON\n@grafreak0', { fontSize: '32px', align: 'center', color: '#ffcc44', fontWeight: 'bold' }).setOrigin(0.5);
+    const closeBtn = this.add.text(0, 100, '[ CLOSE ]', { fontSize: '16px', color: '#ffee88' }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    closeBtn.on('pointerdown', () => panel.destroy());
+    panel.add([bg, creator, closeBtn]);
+    panel.setScale(0);
+    this.tweens.add({ targets: panel, scaleX: 1, scaleY: 1, duration: 250, ease: 'Back.Out' });
   }
 }

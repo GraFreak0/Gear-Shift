@@ -14,7 +14,7 @@ export default class SoundManager {
             try {
                 this._ctx = new (window.AudioContext || window.webkitAudioContext)();
                 this._masterGain = this._ctx.createGain();
-                this._masterGain.gain.value = 0.4;
+                this._masterGain.gain.value = 0.6;
                 this._masterGain.connect(this._ctx.destination);
             } catch (e) {
                 return null;

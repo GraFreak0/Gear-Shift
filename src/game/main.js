@@ -12,23 +12,19 @@ export function initGame(containerId) {
 
   const config = {
     type: Phaser.AUTO,
-    width: 800,
-    height: 600,
     parent: containerId,
     backgroundColor: '#0a0a1a',
     scale: {
-      mode: Phaser.Scale.FIT,
+      mode: Phaser.Scale.RESIZE,
       autoCenter: Phaser.Scale.CENTER_BOTH,
       width: 800,
       height: 600,
-      orientation: mobile ? Phaser.Scale.LANDSCAPE : Phaser.Scale.NO_ORIENTATION,
     },
     physics: {
       default: 'arcade',
       arcade: { debug: false },
     },
     input: {
-      // More touch pointers on mobile, standard on PC
       activePointers: mobile ? 3 : 1,
     },
     // Store platform on game registry so scenes can read it

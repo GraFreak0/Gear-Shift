@@ -15,21 +15,22 @@ import DailyModifierManager from '../managers/DailyModifierManager.js';
 import { PART_TYPES, MACHINE_TYPES } from '../data/machines.js';
 import { saveHighScore, loadHighScore } from '../managers/IntegrityManager.js';
 
-// Layout constants (relative to 800x600 base resolution)
-const BELT_Y = 280;
-const BELT_H = 50;
-const TRAY_Y = 490;
-const SPAWN_X = -100;
-const EXIT_X = 900;
-const URGENT_THRESHOLD = 620;
-
 export default class GameScene extends Phaser.Scene {
   constructor() {
     super({ key: 'GameScene' });
   }
 
+  init() {
+    this.beltY = 280;
+    this.trayY = 490;
+    this.isMobile = false;
+    this.uiScale = 1;
+  }
+
   create() {
     const { width, height } = this.cameras.main;
+    this.cameras.main.resetFX();
+    this.cameras.main.fadeIn(400);
 
     this.soundManager = new SoundManager();
     this.themeManager = new ThemeManager();
@@ -39,7 +40,6 @@ export default class GameScene extends Phaser.Scene {
     this.dailyModifier = new DailyModifierManager().get();
     this.theme = this.themeManager.get();
 
-    // Apply upgrade + daily modifiers to score/level managers
     const upgMods = this.upgradeManager.getModifiers();
     const modifiers = {
       ...upgMods,
@@ -53,10 +53,7 @@ export default class GameScene extends Phaser.Scene {
     this.skillManager = new SkillManager();
     this.dailyManager = new DailyManager();
 
-    // Apply belt slow from upgrades
-    if (upgMods.beltSlowPct > 0) {
-      this.levelManager.beltSpeed *= (1 - upgMods.beltSlowPct);
-    }
+    if (upgMods.beltSlowPct > 0) this.levelManager.baseBeltSpeed *= (1 - upgMods.beltSlowPct);
 
     this.machines = [];
     this.parts = [];
@@ -65,747 +62,283 @@ export default class GameScene extends Phaser.Scene {
     this.freezeActive = false;
     this.slowmoActive = false;
     this.elapsedMs = 0;
-    this.distanceSinceLastSpawn = 300; // Start ready to spawn
+    this.distanceSinceLastSpawn = 300; 
     this.requiredDistance = 300; 
-    this.consecutiveFixes = 0; // for chain reaction tracking
-    this.chainReactionCount = 0;
     this.bossSpawned = false;
-
-    // Challenge from URL
-    this.challengeTarget = null;
-    try {
-      const hash = window.location.hash;
-      if (hash.startsWith('#challenge=')) {
-        const payload = JSON.parse(atob(hash.replace('#challenge=', '')));
-        if (payload.game === 'gearworks') this.challengeTarget = payload;
-      }
-    } catch (e) { }
 
     this.envManager.onEvent((evt) => this.handleEnvEvent(evt));
 
-    this.currentPathType = this.levelManager.getPathType();
-    this.beltPath = this.createBeltPath(this.currentPathType);
+    this.layout();
+    
+    this.scale.on('resize', () => this.layout());
 
-    this.buildBackground(width, height);
-    this.buildConveyor(width);
-    this.buildPartsTray(width, height);
-    this.buildHUD(width, height);
-    this.buildSkillBar(width, height);
-    this.setupDragDrop();
-    this.startSpawning();
-    this.buildPauseButton(width);
-    this.showDailyModifierBanner(width, height);
-
-    this.cameras.main.fadeIn(400);
     this.showCountdown();
   }
 
-  // ─── THEME / BACKGROUND ─────────────────────────────────────────────────────
+  layout() {
+    if (!this.cameras || !this.cameras.main) return;
+    const { width, height } = this.cameras.main;
+    this.isMobile = width < 600;
+    this.uiScale = Math.min(1.4, Math.max(0.8, width / 1100));
+    if (this.isMobile) this.uiScale *= 1.1;
 
-  buildBackground(width, height) {
-    const t = this.theme;
-    const bg = this.add.graphics();
-    bg.fillGradientStyle(t.bgTop, t.bgTop, t.bgBot, t.bgBot, 1);
-    bg.fillRect(0, 0, width, height);
-    bg.lineStyle(1, t.gridColor, 0.4);
-    for (let x = 0; x < width; x += 40) bg.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 40) bg.lineBetween(0, y, width, y);
+    this.beltY = height * 0.42;
+    this.trayY = height - (this.isMobile ? 90 : 115) * this.uiScale;
 
-    // Belt area shadow
-    const beltArea = this.add.graphics();
-    beltArea.fillStyle(t.bgBot, 0.8);
-    beltArea.fillRect(0, BELT_Y - BELT_H, width, BELT_H * 2);
+    if (this.bgGraphics) this.bgGraphics.destroy();
+    this.buildBackground(width, height);
 
-    this.add.text(20, BELT_Y - 5, '→ ENTRY', { fontSize: '10px', fontFamily: 'monospace', color: '#334466' });
-    this.add.text(width - 75, BELT_Y - 5, 'EXIT →', { fontSize: '10px', fontFamily: 'monospace', color: '#553333' });
+    this.updateBeltPath();
 
-    // Exit danger zone
-    const dangerG = this.add.graphics();
-    dangerG.fillStyle(t.dangerColor, 0.3);
-    dangerG.fillRect(width - 90, BELT_Y - BELT_H, 90, BELT_H * 2);
-    dangerG.lineStyle(2, t.dangerBorder, 0.6);
-    dangerG.lineBetween(width - 90, BELT_Y - BELT_H, width - 90, BELT_Y + BELT_H);
+    if (this.hudContainer) this.hudContainer.destroy();
+    this.buildHUD(width, height);
 
-    // Theme-specific background decorations
-    this.buildThemeDecorations(width, height, t);
+    if (this.skillContainer) this.skillContainer.destroy();
+    this.buildSkillBar(width, height);
+
+    if (this.trayContainer) this.trayContainer.destroy();
+    this.buildPartsTray(width, height);
+
+    if (this.pauseBtn) this.pauseBtn.destroy();
+    this.buildPauseButton(width);
   }
 
-  buildThemeDecorations(width, height, t) {
-    if (t.id === 'cyber') {
-      // Neon sign strips
-      const neonG = this.add.graphics();
-      neonG.lineStyle(2, 0x8800ff, 0.3);
-      for (let y = 60; y < BELT_Y - BELT_H; y += 60) {
-        neonG.lineBetween(0, y, width, y);
-      }
-      // Scanlines
-      const scanG = this.add.graphics();
-      scanG.lineStyle(1, 0x4400aa, 0.15);
-      for (let y = 0; y < height; y += 4) scanG.lineBetween(0, y, width, y);
-    } else if (t.id === 'lava') {
-      // Lava glow at bottom
-      const lavaG = this.add.graphics();
-      lavaG.fillGradientStyle(0x000000, 0x000000, 0x330800, 0x330800, 1);
-      lavaG.fillRect(0, height - 120, width, 120);
-      // Lava bubble animation
-      this.lavaParticleTimer = this.time.addEvent({
-        delay: 1200,
-        callback: () => this.spawnLavaBubble(width, height),
-        loop: true,
-      });
-    } else if (t.id === 'factory') {
-      // Industrial ceiling pipes
-      const pipeG = this.add.graphics();
-      pipeG.fillStyle(0x222233);
-      pipeG.fillRect(0, 0, width, 8);
-      pipeG.fillStyle(0x334455);
-      [100, 220, 380, 540, 680].forEach(x => {
-        pipeG.fillRect(x, 0, 20, 30);
-        pipeG.fillRect(x + 5, 30, 10, 3);
-      });
-    }
-  }
-
-  spawnLavaBubble(width, height) {
-    if (!this.gameRunning) return;
-    const x = Phaser.Math.Between(20, width - 20);
-    const bubble = this.add.circle(x, height - 10, Phaser.Math.Between(4, 10), 0xff4400, 0.6);
-    bubble.setDepth(0);
-    this.tweens.add({
-      targets: bubble, y: height - 60, alpha: 0, scaleX: 2, scaleY: 0.5,
-      duration: Phaser.Math.Between(800, 1600), ease: 'Quad.Out',
-      onComplete: () => bubble.destroy(),
-    });
-  }
-
-  buildConveyor(width) {
+  updateBeltPath() {
+    const type = this.levelManager.getPathType();
+    if (this.currentPathType === type && this.conveyorBelt) return;
+    
+    this.currentPathType = type;
+    if (this.conveyorBelt) this.conveyorBelt.destroy();
+    
+    this.beltPath = this.createBeltPath(type);
     this.conveyorBelt = new ConveyorBelt(this, this.beltPath, this.theme);
   }
 
   createBeltPath(type) {
     const { width } = this.cameras.main;
-    const path = new Phaser.Curves.Path(-150, BELT_Y);
+    const path = new Phaser.Curves.Path(-150, this.beltY);
     
-    if (type === 'ZIGZAG') {
-      // Smooth curve instead of sharp angles
+    if (type === 'S_CURVE') {
+        path.cubicBezierTo(
+            width * 0.3, this.beltY + 100,
+            width * 0.7, this.beltY - 100,
+            width + 200, this.beltY
+        );
+    } else if (type === 'ROUNDABOUT') {
+        path.lineTo(width * 0.2, this.beltY);
+        path.ellipseTo(60, 60, 180, 0, false, 0); // Bottom curve
+        path.ellipseTo(60, 60, 0, 180, true, 0);  // Top curve
+        path.lineTo(width + 200, this.beltY);
+    } else if (type === 'ZIGZAG') {
+      path.lineTo(width * 0.25, this.beltY - 40);
+      path.lineTo(width * 0.5, this.beltY + 40);
+      path.lineTo(width * 0.75, this.beltY - 40);
+      path.lineTo(width + 200, this.beltY);
+    } else if (type === 'CHAOS') {
       path.splineTo([
-        width * 0.25, BELT_Y - 40,
-        width * 0.5, BELT_Y + 40,
-        width * 0.75, BELT_Y - 40,
-        width + 200, BELT_Y
-      ]);
-    } else if (type === 'WAVE') {
-      path.splineTo([
-        width * 0.2, BELT_Y + 70,
-        width * 0.4, BELT_Y - 70,
-        width * 0.6, BELT_Y + 70,
-        width * 0.8, BELT_Y - 70,
-        width + 200, BELT_Y
+          width * 0.2, this.beltY + 120,
+          width * 0.4, this.beltY - 80,
+          width * 0.6, this.beltY + 80,
+          width * 0.8, this.beltY - 120,
+          width + 200, this.beltY
       ]);
     } else {
-      path.lineTo(width + 200, BELT_Y);
+      path.lineTo(width + 200, this.beltY);
     }
     return path;
   }
 
-  // ─── PARTS TRAY ─────────────────────────────────────────────────────────────
+  buildBackground(width, height) {
+    const g = this.add.graphics();
+    g.fillGradientStyle(this.theme.bgTop, this.theme.bgTop, this.theme.bgBot, this.theme.bgBot, 1);
+    g.fillRect(0, 0, width, height);
+    g.lineStyle(1, this.theme.gridColor, 0.4);
+    const step = this.isMobile ? 30 : 40;
+    for (let x = 0; x < width; x += step) g.lineBetween(x, 0, x, height);
+    for (let y = 0; y < height; y += step) g.lineBetween(0, y, width, y);
+    g.setDepth(-10);
+    this.bgGraphics = g;
+  }
 
   buildPartsTray(width, height) {
-    const t = this.theme;
-    const trayBg = this.add.graphics();
-    trayBg.fillStyle(t.hudBg, 0.97);
-    trayBg.fillRect(0, TRAY_Y - 55, width, height - TRAY_Y + 55);
-    trayBg.lineStyle(2, t.hudBorder);
-    trayBg.lineBetween(0, TRAY_Y - 55, width, TRAY_Y - 55);
+    this.trayContainer = this.add.container(width / 2, this.trayY);
+    const trayW = Math.min(width * 0.98, 620 * this.uiScale);
+    const trayH = (this.isMobile ? 80 : 95) * this.uiScale;
+    const bg = this.add.rectangle(0, 0, trayW, trayH, this.theme.hudBg, 0.9).setStrokeStyle(2, this.theme.hudBorder);
+    this.trayContainer.add(bg);
 
-    this.add.text(10, TRAY_Y - 52, '🔧 PARTS TRAY', { fontSize: '11px', fontFamily: 'monospace', color: '#445566' });
-    this.add.text(width - 10, TRAY_Y - 52, 'Drag to machines ↑', { fontSize: '11px', fontFamily: 'monospace', color: '#445566' }).setOrigin(1, 0);
-
-    this.parts = [];
-    const partsToShow = PART_TYPES;
-    const slotSpacing = Math.floor((width - 40) / partsToShow.length);
-
-    partsToShow.forEach((partData, i) => {
-      const x = 20 + slotSpacing * i + slotSpacing / 2;
-      const y = TRAY_Y - 5;
-      const part = new Part(this, x, y, partData);
-      part.setDepth(10);
-      part.setScale(1.1);
-      this.parts.push(part);
-      this.add.text(x, y + 42, partData.name.toUpperCase(), { 
-        fontSize: '11px', 
-        fontFamily: 'monospace', 
-        color: '#8899aa', 
-        fontWeight: 'bold' 
-      }).setOrigin(0.5).setDepth(10);
+    const spacing = trayW / (PART_TYPES.length + 1);
+    this.parts = PART_TYPES.map((partDef, i) => {
+      const part = new Part(this, (i + 1) * spacing - trayW / 2, 0, partDef);
+      part.setUIScale(this.uiScale);
+      this.trayContainer.add(part);
+      return part;
     });
   }
-
-  // ─── HUD ─────────────────────────────────────────────────────────────────────
 
   buildHUD(width, height) {
-    const t = this.theme;
-    const hudBg = this.add.graphics();
-    hudBg.fillStyle(t.hudBg, 0.9);
-    hudBg.fillRect(0, 0, width, 42);
-    hudBg.lineStyle(1, t.hudBorder);
-    hudBg.lineBetween(0, 42, width, 42);
-    hudBg.setDepth(15);
+    this.hudContainer = this.add.container(0, 0).setDepth(100);
+    const isMobile = this.isMobile;
+    const bar = this.add.graphics();
+    bar.fillStyle(0x000000, 0.4);
+    bar.fillRect(0, 0, width, isMobile ? 55 : 65);
+    this.hudContainer.add(bar);
 
-    const label = (lx, text) => this.add.text(lx, 10, text, { fontSize: '11px', fontFamily: 'monospace', color: '#778899', fontWeight: 'bold' }).setDepth(16);
-    const val = (lx, init, color) => this.add.text(lx, 21, init, { fontSize: '18px', fontFamily: 'monospace', color, fontWeight: 'bold' }).setDepth(16);
-
-    label(25, 'SCORE'); this.scoreText = val(25, '0', '#ffffff');
-    label(165, 'COMBO'); this.comboText = val(165, 'x1', t.accentColor);
-    label(265, 'LEVEL'); this.levelText = val(265, '1', '#88ccff');
-    label(335, 'FIXED'); this.fixedText = val(335, '0', '#66ff88');
-    label(415, 'STREAK'); this.streakText = val(415, '0', '#ff88ff');
-
-    // Lives
-    this.livesContainer = this.add.container(width - 140, 18).setDepth(16);
-    this.lifeIcons = [];
-    for (let i = 0; i < 5; i++) {
-      const heart = this.add.text(i * 24, 0, '❤', { fontSize: '16px' }).setOrigin(0.5);
-      this.livesContainer.add(heart);
-      this.lifeIcons.push(heart);
-    }
-
-    // Progress bar toward next level
-    this.progressBarBg = this.add.rectangle(width / 2 + 10, 21, 120, 10, 0x111122).setStrokeStyle(1, t.hudBorder).setDepth(16);
-    this.progressBar = this.add.rectangle(width / 2 + 10 - 60, 21, 0, 8, 0x224488).setOrigin(0, 0.5).setDepth(16);
-    this.add.text(width / 2 + 10, 11, 'LVL', { fontSize: '8px', fontFamily: 'monospace', color: '#334466' }).setOrigin(0.5).setDepth(16);
-
-    // Daily modifier indicator
-    if (this.dailyModifier) {
-      const mod = this.dailyModifier;
-      this.add.text(width / 2 + 75, 10, `${mod.icon} ${mod.name}`, {
-        fontSize: '9px', fontFamily: 'monospace', color: '#ffcc44', backgroundColor: '#110a00',
-      }).setPadding(4, 2).setDepth(16);
-    }
-
-    // Sound toggle button
-    const sndBtn = this.add.text(width - 68, 21, this.soundManager.enabled ? '🔊' : '🔇', { fontSize: '16px' })
-      .setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
-    sndBtn.on('pointerdown', () => {
-      const on = this.soundManager.toggle();
-      sndBtn.setText(on ? '🔊' : '🔇');
-    });
-
-    // Daily challenge progress
-    if (this.dailyManager) {
-      this.dailyChallengeText = this.add.text(width - 10, height - 26, '', {
-        fontSize: '10px', fontFamily: 'monospace', color: '#778899',
-      }).setOrigin(1, 0).setDepth(16);
-    }
-
-    // Challenge vs friend
-    if (this.challengeTarget) {
-      this.add.text(width / 2, BELT_Y - BELT_H - 10, `VS ${this.challengeTarget.name.toUpperCase()}: BEAT ${this.challengeTarget.score.toLocaleString()}`, {
-        fontSize: '12px', fontFamily: 'monospace', color: '#ff88ff',
-      }).setOrigin(0.5);
-    }
-
-    // Environment event banner (hidden initially)
-    this.envBanner = this.add.text(width / 2, BELT_Y - BELT_H + 10, '', {
-      fontSize: '16px', fontFamily: 'monospace', color: '#ffee44',
-      stroke: '#000000', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(18).setAlpha(0);
+    this.scoreText = this.add.text(isMobile ? 15 : 25, isMobile ? 12 : 15, 'SCORE: 0', { fontSize: isMobile ? '18px' : '24px', fontWeight: 'bold' });
+    this.comboText = this.add.text(width / 2, isMobile ? 12 : 15, 'x1', { fontSize: isMobile ? '20px' : '26px', color: '#ffcc44' }).setOrigin(0.5, 0);
+    this.levelText = this.add.text(width - (isMobile ? 120 : 150), isMobile ? 12 : 15, 'Lv1', { fontSize: isMobile ? '18px' : '24px', color: '#aaccff' }).setOrigin(1, 0);
+    
+    const progressBg = this.add.rectangle(width - 20, isMobile ? 25 : 30, 100, 12, 0x112233).setOrigin(1, 0.5).setStrokeStyle(1, 0x334466);
+    this.progressBar = this.add.rectangle(width - 118, isMobile ? 25 : 30, 2, 8, this.theme.accentColor).setOrigin(0, 0.5);
+    
+    this.livesText = this.add.text(width / 2, isMobile ? 38 : 45, '♥♥♥', { fontSize: '18px', color: '#ff6666' }).setOrigin(0.5, 0);
+    this.hudContainer.add([this.scoreText, this.comboText, this.levelText, progressBg, this.progressBar, this.livesText]);
   }
-
-  // ─── SKILL BAR ──────────────────────────────────────────────────────────────
 
   buildSkillBar(width, height) {
-    const t = this.theme;
+    const spacingDelta = (this.isMobile ? 85 : 105) * this.uiScale;
+    this.skillContainer = this.add.container(width / 2, this.trayY - spacingDelta).setDepth(90);
     const skills = this.skillManager.skillList;
-    const barY = TRAY_Y + 48; // Tighter vertical gap
-    this.skillButtons = [];
+    const spacing = (this.isMobile ? 70 : 90) * this.uiScale;
+    const startX = -(skills.length - 1) * spacing / 2;
 
-    const btnW = Math.min(Math.floor((width - 60) / skills.length) - 15, 180);
-    const btnH = 48;
-    const totalW = skills.length * (btnW + 15);
-    const startX = (width - totalW) / 2;
-
-    this.add.text(startX, barY - 15, '⚡ SKILLS (tap to activate)', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#445566', fontWeight: 'bold'
-    }).setDepth(11);
-
-    skills.forEach((skill, i) => {
-      const x = startX + i * (btnW + 15) + btnW / 2;
-      const y = barY + 24;
-
-      const bg = this.add.rectangle(x, y, btnW, btnH, t.hudBg).setStrokeStyle(2, t.hudBorder).setDepth(11);
-      this.add.text(x - btnW / 2 + 10, y, skill.icon, { fontSize: '24px' }).setDepth(12).setOrigin(0, 0.5);
-      
-      this.add.text(x - 5, y - 8, skill.name, { 
-        fontSize: '10px', 
-        fontFamily: 'monospace', 
-        color: '#aaaacc', 
-        fontWeight: 'bold' 
-      }).setDepth(12).setOrigin(0, 0.5);
-
-      this.add.text(x - 5, y + 8, skill.desc, { 
-        fontSize: '9px', 
-        fontFamily: 'monospace', 
-        color: '#778899',
-        wordWrap: { width: btnW - 60 }
-      }).setDepth(12).setOrigin(0, 0.5);
-
-      const cdOverlay = this.add.rectangle(x - btnW / 2, y, 0, btnH, 0x000033, 0.75).setDepth(13).setOrigin(0, 0.5);
-
-      bg.setInteractive({ useHandCursor: true });
-      bg.on('pointerdown', () => this.activateSkill(skill.id));
-      bg.on('pointerover', () => { bg.setFillStyle(0x1a2244); this.tweens.add({ targets: bg, scaleX: 1.02, scaleY: 1.02, duration: 80 }); });
-      bg.on('pointerout', () => { bg.setFillStyle(t.hudBg); this.tweens.add({ targets: bg, scaleX: 1, scaleY: 1, duration: 80 }); });
-
-      this.skillButtons.push({ skill, bg, cdOverlay, maxWidth: btnW });
+    this.skillButtons = skills.map((skill, i) => {
+      const sw = (this.isMobile ? 56 : 72) * this.uiScale;
+      const sh = sw;
+      const c = this.add.container(startX + i * spacing, 0);
+      const bg = this.add.rectangle(0, 0, sw, sh, 0x111122, 1).setStrokeStyle(2, this.theme.hudBorder);
+      const icon = this.add.text(0, -6 * this.uiScale, skill.icon, { fontSize: `${24 * this.uiScale}px` }).setOrigin(0.5);
+      const label = this.add.text(0, 18 * this.uiScale, skill.id.toUpperCase(), { fontSize: `${9 * this.uiScale}px`, color: '#88aaff' }).setOrigin(0.5);
+      const cd = this.add.rectangle(-sw/2, sh/2, 0, sh, 0xffffff, 0.3).setOrigin(0, 1);
+      c.add([bg, icon, label, cd]);
+      c.setSize(sw, sh).setInteractive({ useHandCursor: true }).on('pointerdown', () => this.activateSkill(skill));
+      this.skillContainer.add(c);
+      return { skill, cdOverlay: cd, bg, maxWidth: sw };
     });
   }
 
-  activateSkill(id) {
-    if (!this.gameRunning || this.paused) return;
-    const now = this.time.now;
-    if (!this.skillManager.canActivate(id, now)) return;
-    this.skillManager.activate(id, now);
-    this.soundManager.playSkillActivate(id);
-
-    const { width } = this.cameras.main;
-    if (id === 'freeze') {
-      this.freezeActive = true;
-      this.showFloatingText(width / 2, BELT_Y - 60, '❄ BELT FROZEN!', '#88ddff', 20);
-      this.cameras.main.flash(200, 100, 200, 255, true);
-      this.time.delayedCall(5000, () => {
-        this.freezeActive = false;
-        this.skillManager.deactivate('freeze');
-      });
-    } else if (id === 'slowmo') {
-      this.slowmoActive = true;
-      this.showFloatingText(width / 2, BELT_Y - 60, '🐢 SLOW-MO!', '#ffee44', 20);
-      this.cameras.main.flash(200, 255, 200, 50, true);
-      this.time.delayedCall(8000, () => {
-        this.slowmoActive = false;
-        this.skillManager.deactivate('slowmo');
-      });
-    } else if (id === 'wrench') {
-      this.autoFixNearestSlot();
-      this.skillManager.deactivate('wrench');
-    }
+  buildPauseButton(width) {
+    this.pauseBtn = this.add.text(width - 20, 15, '⏸', { fontSize: '24px' }).setOrigin(1, 0).setInteractive({ useHandCursor: true }).setDepth(110);
+    this.pauseBtn.on('pointerdown', () => this.togglePause());
   }
 
-  autoFixNearestSlot() {
-    const unfixed = this.machines.filter(m => !m.isFixed && !m.isDestroyed);
-    if (unfixed.length === 0) return;
-    unfixed.sort((a, b) => b.x - a.x);
-    const target = unfixed[0];
-    const needed = target.getRequiredParts();
-    if (needed.length === 0) return;
-    target.tryFillSlot(needed[0]);
-    this.spawnParticles(target.x, target.y, this.theme.particleColor, 15);
-    this.showFloatingText(target.x, target.y - 50, '🔧 AUTO-FIX!', '#ffcc44', 18);
-    this.onSlotFilled(target);
-  }
+  update(time, delta) {
+    if (this.paused) return;
+    const viewWidth = this.cameras.main.width;
+    const baseSpeed = this.levelManager.getScaledSpeed(viewWidth);
+    const beltSpeed = (this.freezeActive || !this.gameRunning) ? 0 : this.slowmoActive ? baseSpeed * 0.4 : baseSpeed;
 
-  // ─── DAILY MODIFIER BANNER ───────────────────────────────────────────────────
-
-  showDailyModifierBanner(width, height) {
-    const mod = this.dailyModifier;
-    if (!mod) return;
-    const banner = this.add.text(width / 2, height / 2, `${mod.icon} ${mod.name}\n${mod.desc}`, {
-      fontSize: '20px', fontFamily: 'monospace', color: '#ffcc44',
-      stroke: '#000000', strokeThickness: 4, align: 'center',
-    }).setOrigin(0.5).setDepth(25).setAlpha(0);
-    this.tweens.add({
-      targets: banner, alpha: 1, duration: 300,
-      onComplete: () => {
-        this.time.delayedCall(2200, () => {
-          this.tweens.add({ targets: banner, alpha: 0, y: height / 2 - 40, duration: 500, onComplete: () => banner.destroy() });
-        });
-      },
-    });
-  }
-
-  // ─── ENVIRONMENT EVENTS ──────────────────────────────────────────────────────
-
-  handleEnvEvent(evt) {
+    this.conveyorBelt.update(delta, beltSpeed);
     if (!this.gameRunning) return;
-    this.soundManager.playEventAlert();
-    this.envBanner.setText(`${evt.name}  ${evt.desc}`);
-    this.envBanner.setColor(evt.color);
-    this.envBanner.setAlpha(1);
-    this.tweens.add({ targets: this.envBanner, alpha: 0, duration: 3500, delay: 2000 });
+    
+    this.elapsedMs += delta;
+    this.envManager.update(this.elapsedMs, this.levelManager.level);
 
-    if (evt.effect === 'shake') {
-      this.cameras.main.shake(4000, 0.006);
-    }
-    if (evt.effect === 'golden' || evt.effect === 'score_triple') {
-      this.cameras.main.flash(300, 255, 200, 50, true);
-    }
-  }
-
-  // ─── DRAG & DROP ─────────────────────────────────────────────────────────────
-
-  setupDragDrop() {
-    this.input.on('drop', (pointer, gameObject, dropZone) => {
-      if (!this.gameRunning || this.paused) return;
-      if (!(gameObject instanceof Part)) return;
-      const machine = dropZone.machineRef;
-      if (!machine || machine.isFixed || machine.isDestroyed) return;
-
-      const success = machine.tryFillSlot(gameObject.partId);
-      if (success) {
-        gameObject.markUsed();
-        this.soundManager.playPartCorrect();
-        this.onSlotFilled(machine);
-        this.spawnParticles(machine.x, machine.y, this.theme.particleColor);
-      } else {
-        const needed = machine.getRequiredParts();
-        if (needed.length > 0) {
-          machine.flashError();
-          this.showFloatingText(machine.x, machine.y - 50, 'WRONG PART!', '#ff4444');
-          this.soundManager.playWrongPart();
-          this.scoreManager.onWrongPart();
-          this.updateHUD();
-          this.cameras.main.shake(150, 0.005);
-        }
-      }
-    });
-
-    // Sound on drag start
-    this.input.on('dragstart', () => {
-      if (this.gameRunning && !this.paused) this.soundManager.playPartPlace();
-    });
-  }
-
-  onSlotFilled(machine) {
-    if (!machine.isFixed) return;
-
-    const isBoss = machine.machineType.isBoss || false;
-    const { scoreMultiplier, repairBonus } = this.envManager.onMachineFixed();
-    const speedBonus = machine.x < this.cameras.main.width * 0.6;
-    const result = this.scoreManager.onMachineFixed(speedBonus, isBoss);
-    const leveled = this.levelManager.onMachineProcessed();
-
-    this.achievementManager.recordFix();
-
-    // Chain reaction tracking
-    this.consecutiveFixes++;
-    if (this.consecutiveFixes >= 3) {
-      this.chainReactionCount = this.consecutiveFixes;
-      this.soundManager.playChainReaction(this.consecutiveFixes);
-      this.showFloatingText(machine.x, machine.y - 90, `🔗 CHAIN x${this.consecutiveFixes}!`, '#44ffcc', 16);
-      this.spawnChainEffect(machine.x, machine.y);
-    }
-
-    const totalGained = result.gained * scoreMultiplier + repairBonus;
-    const combo = this.scoreManager.combo - 1;
-    const comboLabel = combo > 1 ? ` x${combo}!` : '';
-    const evtLabel = scoreMultiplier > 1 ? ` [x${scoreMultiplier} EVENT]` : '';
-    this.showFloatingText(machine.x, machine.y - 60, `+${totalGained}${comboLabel}${evtLabel}`, '#ffcc44', combo > 3 ? 26 : 20);
-
-    if (speedBonus) this.showFloatingText(machine.x, machine.y - 85, '⚡ SPEED BONUS!', '#88ffcc', 12);
-    if (result.streakBonus > 0) this.showFloatingText(machine.x, machine.y - 100, `🔥 +${result.streakBonus}`, '#ff88ff', 12);
-    if (repairBonus > 0) this.showFloatingText(machine.x, machine.y - 115, `🔧 +${repairBonus}`, '#88ff88', 12);
-    if (isBoss) {
-      this.showFloatingText(machine.x, machine.y - 130, '🤖 BOSS SLAIN! +500', '#ff88ff', 22);
-      this.cameras.main.flash(400, 255, 100, 255, true);
-      this.soundManager.playBossSpawn(); // victory variation
-    }
-
-    this.soundManager.playMachineFixed();
-    if (combo >= 2) this.soundManager.playCombo(combo);
-    if (combo >= 5) this.cameras.main.shake(200, 0.008);
-    if (combo >= 8) {
-      this.cameras.main.flash(150, 255, 180, 0, true);
-      // Combo fire trail on parts
-      this.spawnFireTrail(machine.x, machine.y);
-    }
-
-    if (leveled) {
-      this.showLevelUp();
-      this.soundManager.playLevelUp();
-      // Every 10 levels spawn a boss
-      if (this.levelManager.level % 10 === 0) {
-        this.time.delayedCall(1500, () => this.spawnBoss());
-      }
-    }
-
-    const extraPoints = (result.gained * (scoreMultiplier - 1)) + repairBonus;
-    if (extraPoints > 0) {
-        this.scoreManager.addBonus(Math.floor(extraPoints));
-    }
-    this.updateHUD();
-    this.spawnParticles(machine.x, machine.y, this.theme.particleColor, 20);
-
-    // Check achievements
-    const stats = this.scoreManager.getStats();
-    stats.level = this.levelManager.level;
-    stats.lastMachinePerfect = result.gained > 0 && machine._noWrongParts;
-    stats.dailyCompleted = this.dailyManager.dailyCompleted;
-    const newAchs = this.achievementManager.check(stats);
-    newAchs.forEach((ach, i) => {
-      this.time.delayedCall(i * 1200, () => this.showAchievementPopup(ach));
-    });
-
-    this.tweens.add({
-      targets: machine, x: EXIT_X + 200, duration: 800, ease: 'Quad.In',
-      onComplete: () => this.removeMachine(machine),
-    });
-  }
-
-  spawnBoss() {
-    if (!this.gameRunning) return;
-    const bossMachineType = MACHINE_TYPES.find(m => m.id === 'boss_mega');
-    if (!bossMachineType) return;
-    const machine = new Machine(this, SPAWN_X - 30, BELT_Y - 10, bossMachineType);
-    machine.setDepth(5);
-    machine.setScale(1.1);
-    this.machines.push(machine);
-    this.soundManager.playBossSpawn();
-    this.cameras.main.shake(600, 0.015);
-    this.cameras.main.flash(300, 200, 0, 0, true);
-    const { width } = this.cameras.main;
-    this.showFloatingText(width / 2, BELT_Y - 80, '⚠ BOSS MACHINE INCOMING!', '#ff4444', 24);
-    this.tweens.add({ targets: machine, x: SPAWN_X + 50, duration: 400, ease: 'Back.Out' });
-  }
-
-  spawnChainEffect(x, y) {
-    const colors = [0x44ffcc, 0x4488ff, 0x88ff44, 0xffcc44];
-    for (let i = 0; i < 20; i++) {
-      const p = this.add.circle(x, y, Phaser.Math.Between(4, 10), colors[i % colors.length]);
-      p.setDepth(16);
-      this.tweens.add({
-        targets: p,
-        x: x + Phaser.Math.Between(-120, 120),
-        y: y + Phaser.Math.Between(-100, 60),
-        alpha: 0, scaleX: 0, scaleY: 0,
-        duration: Phaser.Math.Between(500, 1000),
-        ease: 'Quad.Out',
-        onComplete: () => p.destroy(),
-      });
-    }
-  }
-
-  spawnFireTrail(x, y) {
-    const colors = [0xff4400, 0xff8800, 0xffcc00];
-    for (let i = 0; i < 12; i++) {
-      const p = this.add.circle(
-        x + Phaser.Math.Between(-60, 60),
-        y + Phaser.Math.Between(-30, 30),
-        Phaser.Math.Between(5, 12),
-        colors[i % colors.length]
-      );
-      p.setDepth(16);
-      this.tweens.add({
-        targets: p, y: p.y - Phaser.Math.Between(30, 80), alpha: 0,
-        duration: Phaser.Math.Between(400, 700), ease: 'Quad.Out',
-        onComplete: () => p.destroy(),
-      });
-    }
-  }
-
-  showAchievementPopup(ach) {
-    const { width } = this.cameras.main;
-    const popup = this.add.container(width - 200, -60).setDepth(50);
-    const bg = this.add.rectangle(0, 0, 360, 52, 0x111133, 0.96).setStrokeStyle(2, 0xffcc44);
-    const icon = this.add.text(-160, 0, ach.icon, { fontSize: '22px' }).setOrigin(0.5);
-    const title = this.add.text(-130, -8, '🏅 ACHIEVEMENT UNLOCKED!', { fontSize: '10px', fontFamily: 'monospace', color: '#ffcc44' }).setOrigin(0, 0.5);
-    const name = this.add.text(-130, 8, ach.name, { fontSize: '14px', fontFamily: 'monospace', color: '#aaccff' }).setOrigin(0, 0.5);
-    popup.add([bg, icon, title, name]);
-    this.soundManager.playAchievementUnlocked();
-    this.tweens.add({
-      targets: popup, y: 40, duration: 400, ease: 'Back.Out',
-      onComplete: () => {
-        this.time.delayedCall(2500, () => {
-          this.tweens.add({ targets: popup, y: -80, duration: 300, ease: 'Quad.In', onComplete: () => popup.destroy() });
-        });
-      },
-    });
-  }
-
-  // ─── SPAWNING ───────────────────────────────────────────────────────────────
-
-  startSpawning() {
-    this.time.delayedCall(1500, () => {
+    this.distanceSinceLastSpawn += beltSpeed * (delta / 1000);
+    if (this.distanceSinceLastSpawn >= this.requiredDistance) {
       this.spawnMachine();
-      // Distance-based logic is in update()
+      this.distanceSinceLastSpawn = 0;
+      this.requiredDistance = Phaser.Math.Between(260, 420); 
+    }
+
+    this.machines.forEach(m => m.followPath(this.beltPath, beltSpeed, delta));
+    const exitMachines = this.machines.filter(m => m.pathProgress > 1 || m.isDestroyed);
+    exitMachines.forEach(m => {
+        if (!m.isFixed) this.onMachineLost(m);
+        else this.removeMachine(m);
     });
+
+    this.updateSkillCooldowns(time);
+    this.updateHUD();
   }
 
   spawnMachine() {
-    if (!this.gameRunning || this.paused) return;
-    const machineType = this.dailyModifier.bossOnly
-      ? (MACHINE_TYPES.find(m => m.id === 'boss_mega') || this.levelManager.getRandomMachineType())
-      : this.levelManager.getRandomMachineType();
-    const machine = new Machine(this, 0, 0, machineType);
-    machine.setDepth(5);
-    this.machines.push(machine);
-    // Positing handled by followPath starting immediately in update()
-    // Idle hum
-    this.time.delayedCall(400, () => this.soundManager.playMachineHum(machineType.id));
+    try {
+        const isBoss = !this.bossSpawned && this.levelManager.level % 5 === 0;
+        let typeDef;
+        if (isBoss) {
+            typeDef = MACHINE_TYPES.find(m => m.isBoss);
+            this.bossSpawned = true;
+        } else {
+            const regular = MACHINE_TYPES.filter(m => !m.bossOnly);
+            typeDef = regular[Phaser.Math.Between(0, regular.length - 1)];
+            if (this.levelManager.level % 5 !== 0) this.bossSpawned = false;
+        }
+        const machine = new Machine(this, -150, this.beltY, typeDef);
+        machine.on('fixed', () => this.onMachineFixed(machine));
+        this.machines.push(machine);
+    } catch (e) { console.error("Spawn Error:", e); }
   }
 
   removeMachine(machine) {
-    machine.isDestroyed = true;
     const idx = this.machines.indexOf(machine);
     if (idx > -1) this.machines.splice(idx, 1);
     machine.destroy();
   }
 
-  // ─── PAUSE ──────────────────────────────────────────────────────────────────
-
-  buildPauseButton(width) {
-    const pauseBtn = this.add.container(width - 35, 21).setDepth(20);
-    const pBg = this.add.rectangle(0, 0, 30, 28, 0x1a1a33).setStrokeStyle(1, 0x334466);
-    const pText = this.add.text(0, 0, '⏸', { fontSize: '13px' }).setOrigin(0.5);
-    pauseBtn.add([pBg, pText]);
-    pauseBtn.setSize(30, 28);
-    pauseBtn.setInteractive({ useHandCursor: true });
-    pauseBtn.on('pointerdown', () => this.togglePause(pText));
-  }
-
-  togglePause(icon) {
-    this.paused = !this.paused;
-    icon.setText(this.paused ? '▶' : '⏸');
-    if (this.paused) this.showPauseOverlay();
-    else this.hidePauseOverlay();
-  }
-
-  showPauseOverlay() {
-    const { width, height } = this.cameras.main;
-    this.pauseOverlay = this.add.container(width / 2, height / 2).setDepth(50);
-    const bg = this.add.rectangle(0, 0, 340, 260, 0x000011, 0.94).setStrokeStyle(2, this.theme.hudBorder);
-    const txt = this.add.text(0, -80, '⏸ PAUSED', { fontSize: '30px', fontFamily: 'monospace', color: this.theme.accentColor }).setOrigin(0.5);
-    const sub = this.add.text(0, -35, 'Tap ⏸ to resume', { fontSize: '14px', fontFamily: 'monospace', color: '#778899' }).setOrigin(0.5);
-
-    const tipText = this.add.text(0, 10, `💡 ${TIPS[Math.floor(Math.random() * TIPS.length)]}`, {
-      fontSize: '11px', fontFamily: 'monospace', color: '#556677', wordWrap: { width: 300 }, align: 'center',
-    }).setOrigin(0.5);
-
-    const menuBtn = this.add.text(0, 70, '🏠 QUIT TO MENU', { fontSize: '14px', fontFamily: 'monospace', color: '#aaaacc' })
-      .setOrigin(0.5).setInteractive({ useHandCursor: true });
-    menuBtn.on('pointerdown', () => this.scene.start('MenuScene'));
-
-    // Theme toggle in pause
-    const themeBtn = this.add.text(0, 100, `🎨 THEME: ${this.theme.name}`, { fontSize: '12px', fontFamily: 'monospace', color: '#888888' })
-      .setOrigin(0.5).setInteractive({ useHandCursor: true });
-    themeBtn.on('pointerdown', () => {
-      this.themeManager.next();
-      this.theme = this.themeManager.get();
-      themeBtn.setText(`🎨 THEME: ${this.theme.name}`);
-    });
-
-    this.pauseOverlay.add([bg, txt, sub, tipText, menuBtn, themeBtn]);
-  }
-
-  hidePauseOverlay() {
-    if (this.pauseOverlay) { this.pauseOverlay.destroy(); this.pauseOverlay = null; }
-  }
-
-  // ─── COUNTDOWN ──────────────────────────────────────────────────────────────
-
-  showCountdown() {
-    const { width, height } = this.cameras.main;
-    this.gameRunning = false;
-    const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x000011, 0.7).setDepth(30);
-    let count = 3;
-    const countText = this.add.text(width / 2, height / 2, String(count), {
-      fontSize: '96px', fontFamily: 'monospace', color: this.theme.accentColor,
-      stroke: '#000000', strokeThickness: 8,
-    }).setOrigin(0.5).setDepth(31);
-
-    const tick = () => {
-      countText.setText(String(count));
-      this.soundManager.playCountdown();
-      this.tweens.add({ targets: countText, scaleX: 1.3, scaleY: 1.3, alpha: 0.5, duration: 800, ease: 'Quad.Out' });
-      count--;
-      if (count < 0) {
-        countText.setText('GO!');
-        countText.setColor('#66ff88');
-        this.soundManager.playCountdownGo();
-        this.tweens.add({
-          targets: countText, scaleX: 2, scaleY: 2, alpha: 0, duration: 600,
-          onComplete: () => { countText.destroy(); overlay.destroy(); this.gameRunning = true; },
-        });
-      } else {
-        this.time.delayedCall(1000, tick);
-      }
-    };
-    tick();
-  }
-
-  // ─── LEVEL UP ───────────────────────────────────────────────────────────────
-
-  showLevelUp() {
-    const { width, height } = this.cameras.main;
-    const txt = this.add.text(width / 2, height / 2 - 80, `⬆ LEVEL ${this.levelManager.level}!`, {
-      fontSize: '38px', fontFamily: 'monospace', color: this.theme.accentColor,
-      stroke: '#000000', strokeThickness: 6,
-    }).setOrigin(0.5).setDepth(20);
-    this.tweens.add({ targets: txt, y: height / 2 - 150, alpha: 0, duration: 1500, ease: 'Quad.Out', onComplete: () => txt.destroy() });
+  onMachineFixed(machine) {
+    const timeToExit = (1 - machine.pathProgress) * (this.beltPath.getLength() / this.levelManager.getScaledSpeed(this.cameras.main.width));
+    const result = this.scoreManager.onMachineFixed(timeToExit > 3, machine.machineType.isBoss);
     
-    // Check for path transition
-    const newType = this.levelManager.getPathType();
-    if (newType !== this.currentPathType) {
-      this.currentPathType = newType;
-      this.beltPath = this.createBeltPath(newType);
-      this.conveyorBelt.setPath(this.beltPath);
-      
-      this.envBanner.setText(`BELT TRANSITION: ${newType}`).setAlpha(1);
-      this.tweens.add({ targets: this.envBanner, alpha: 0, duration: 2500, delay: 1000 });
-      this.soundManager.playBossSpawn(); // warning sound
+    if (this.levelManager.onMachineProcessed()) {
+        this.soundManager.playLevelUp();
+        this.showFloatingText(this.cameras.main.width/2, this.cameras.main.height/2, "LEVEL UP!", "#ffcc44", 48);
+        this.updateBeltPath(); // Change path on level up if needed
     }
 
-    this.cameras.main.flash(300, 255, 200, 50, true);
+    this.soundManager.playMachineFixed();
+    this.spawnParticles(machine.x, machine.y, this.theme.particleColor, 20);
+    this.showFloatingText(machine.x, machine.y - 40, `+${result.gained}`, '#ffffff', 28);
+    this.tweens.add({ targets: machine, scaleX: 0, scaleY: 0, alpha: 0, y: machine.y - 40, duration: 250, onComplete: () => this.removeMachine(machine) });
   }
 
-  // ─── FLOATING TEXT ──────────────────────────────────────────────────────────
-
-  showFloatingText(x, y, message, color = '#ffffff', size = 18) {
-    const txt = this.add.text(x, y, message, {
-      fontSize: `${size}px`, fontFamily: 'monospace', color, stroke: '#000000', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(20);
-    this.tweens.add({ targets: txt, y: y - 40, alpha: 0, duration: 900, ease: 'Quad.Out', onComplete: () => txt.destroy() });
+  onMachineLost(machine) {
+    if (!this.gameRunning) return;
+    this.scoreManager.onMachineLost();
+    this.levelManager.onMachineProcessed();
+    this.soundManager.playMachineLost();
+    this.cameras.main.flash(400, 255, 0, 0, true);
+    this.cameras.main.shake(200, 0.012);
+    this.showFloatingText(this.cameras.main.width - 60, this.beltY, '−1 LIFE', '#ff4444', 20);
+    this.removeMachine(machine);
+    if (this.scoreManager.isGameOver()) this.endGame();
   }
-
-  // ─── PARTICLES ──────────────────────────────────────────────────────────────
-
-  spawnParticles(x, y, color, count = 10) {
-    for (let i = 0; i < count; i++) {
-      const p = this.add.circle(x, y, Phaser.Math.Between(3, 7), color);
-      p.setDepth(15);
-      this.tweens.add({
-        targets: p,
-        x: x + Phaser.Math.Between(-80, 80),
-        y: y + Phaser.Math.Between(-80, 80),
-        alpha: 0, scaleX: 0, scaleY: 0,
-        duration: Phaser.Math.Between(400, 800),
-        ease: 'Quad.Out',
-        onComplete: () => p.destroy(),
-      });
-    }
-  }
-
-  // ─── HUD UPDATE ─────────────────────────────────────────────────────────────
 
   updateHUD() {
     const stats = this.scoreManager.getStats();
-    this.scoreText.setText(String(stats.score));
+    this.scoreText.setText(`SCORE: ${stats.score.toLocaleString()}`);
     this.comboText.setText(`x${stats.combo}`);
-    const cc = stats.combo >= 8 ? '#ff4444' : stats.combo >= 5 ? '#ff6644' : stats.combo >= 3 ? '#ffaa44' : this.theme.accentColor;
-    this.comboText.setColor(cc);
-    if (stats.combo >= 4) this.tweens.add({ targets: this.comboText, scaleX: 1.3, scaleY: 1.3, duration: 80, yoyo: true });
+    this.levelText.setText(`Lv${this.levelManager.level}`);
+    this.livesText.setText('♥'.repeat(stats.lives));
+    
+    const progress = this.levelManager.getLevelProgress();
+    const targetWidth = Math.max(2, 96 * progress);
+    
+    if (this.progressBar.width !== targetWidth) {
+        this.tweens.add({
+            targets: this.progressBar,
+            width: targetWidth,
+            duration: 300,
+            ease: 'Power2'
+        });
+    }
+  }
 
-    this.levelText.setText(String(this.levelManager.level));
-    this.fixedText.setText(String(stats.machinesFixed));
-    this.streakText.setText(String(stats.streak));
-    this.lifeIcons.forEach((h, i) => h.setAlpha(i < stats.lives ? 1 : 0.15));
-
-    const progress = (this.levelManager.machineCount % 10) / 10;
-    this.progressBar.width = 120 * progress;
-
-    if (this.dailyChallengeText) {
-      const pct = Math.min(stats.score / this.dailyManager.dailyTarget, 1);
-      this.dailyChallengeText.setText(`🎯 ${stats.score.toLocaleString()} / ${this.dailyManager.dailyTarget.toLocaleString()}`);
-      this.dailyChallengeText.setColor(pct >= 1 ? '#44ff88' : pct >= 0.5 ? '#ffcc44' : '#778899');
+  activateSkill(skill) {
+    if (!this.skillManager.activate(skill.id, this.elapsedMs)) return;
+    this.soundManager.playSkillActivate(skill.id);
+    if (skill.id === 'freeze') {
+      this.freezeActive = true;
+      this.time.delayedCall(skill.duration, () => { this.freezeActive = false; });
+    } else if (skill.id === 'slowmo') {
+      this.slowmoActive = true;
+      this.time.delayedCall(skill.duration, () => { this.slowmoActive = false; });
+    } else if (skill.id === 'wrench') {
+      const target = this.machines.find(m => !m.isFixed);
+      if (target) {
+          const slot = target.slots.find(s => !s.filled);
+          if (slot) target.tryFillSlot(slot.requiredPart);
+      }
     }
   }
 
@@ -818,135 +351,60 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  // ─── MACHINE LOST ───────────────────────────────────────────────────────────
-
-  onMachineLost(machine) {
-    if (!this.gameRunning) return;
-    this.scoreManager.onMachineLost();
-    this.levelManager.onMachineProcessed();
-    this.consecutiveFixes = 0; // break chain
-    this.updateHUD();
-    this.soundManager.playMachineLost();
-    this.cameras.main.flash(400, 255, 0, 0, true);
-    this.cameras.main.shake(200, 0.012);
-    const { width } = this.cameras.main;
-    this.showFloatingText(width - 60, BELT_Y, '−1 LIFE', '#ff4444', 20);
-    this.removeMachine(machine);
-    if (this.scoreManager.isGameOver()) this.endGame();
+  showFloatingText(x, y, text, color, size = 20) {
+    const txt = this.add.text(x, y, text, { fontSize: `${size}px`, color, fontWeight: 'bold' }).setOrigin(0.5);
+    this.tweens.add({ targets: txt, y: y - 50, alpha: 0, duration: 800, onComplete: () => txt.destroy() });
   }
 
-  // ─── GAME OVER ──────────────────────────────────────────────────────────────
+  spawnParticles(x, y, color, count) {
+    const e = this.add.particles(x, y, 'particle', { color: [color], speed: { min: 50, max: 150 }, scale: { start: 1, end: 0 }, lifespan: 600, quantity: count, emitting: false });
+    e.explode();
+    this.time.delayedCall(1000, () => e.destroy());
+  }
+
+  showCountdown() {
+      const { width, height } = this.cameras.main;
+      const overlay = this.add.rectangle(width/2, height/2, width, height, 0x000000, 0.4).setDepth(200);
+      const txt = this.add.text(width/2, height/2, '3', { fontSize: '100px', fontWeight: 'bold' }).setOrigin(0.5).setDepth(201);
+      let count = 3;
+      this.soundManager.playCountdown();
+      const timer = this.time.addEvent({
+          delay: 1000,
+          callback: () => {
+              count--;
+              if (count > 0) { txt.setText(count); this.soundManager.playCountdown(); }
+              else if (count === 0) { txt.setText('START!'); this.soundManager.playCountdownGo(); }
+              else { overlay.destroy(); txt.destroy(); this.gameRunning = true; timer.destroy(); }
+          },
+          repeat: 3
+      });
+  }
+
+  togglePause() {
+      this.paused = !this.paused;
+      if (this.paused) {
+          const { width, height } = this.cameras.main;
+          this.pOverlap = this.add.container(width/2, height/2).setDepth(500);
+          const bg = this.add.rectangle(0, 0, width, height, 0x000000, 0.5).setInteractive().on('pointerdown', () => this.togglePause());
+          const txt = this.add.text(0, 0, 'PAUSED', { fontSize: '48px' }).setOrigin(0.5);
+          this.pOverlap.add([bg, txt]);
+      } else if (this.pOverlap) this.pOverlap.destroy();
+  }
+
+  handleEnvEvent(evt) {
+      this.cameras.main.shake(evt.duration, 0.005);
+      this.soundManager.playEventAlert();
+      this.showFloatingText(this.cameras.main.width/2, 100, evt.name, evt.color, 32);
+  }
 
   endGame() {
     this.gameRunning = false;
-    if (this.spawnTimer) this.spawnTimer.remove();
-    if (this.lavaParticleTimer) this.lavaParticleTimer.remove();
-
-    const stats = this.scoreManager.getStats();
-
-    // Integrity: validate score and save verified high score
-    const verifiedScore = this.scoreManager._integrity.getFinalScore(stats.score);
-    if (verifiedScore !== stats.score) {
-      stats.score = 0; // void tampered session
-    }
-    const hs = loadHighScore();
-    if (stats.score > hs) saveHighScore(stats.score);
-
-    const dailyAchieved = this.dailyManager.markPlayed(stats.xp, stats.score);
-    this.upgradeManager.addXP(stats.xp);
     this.soundManager.playGameOver();
-
-    // Final achievement check
-    stats.level = this.levelManager.level;
-    stats.dailyCompleted = dailyAchieved;
+    this.cameras.main.fade(800, 0, 0, 0);
+    const stats = this.scoreManager.getStats();
+    saveHighScore(stats.score);
     this.achievementManager.check(stats);
-
-    this.cameras.main.flash(500, 255, 50, 0, true);
-    this.time.delayedCall(800, () => {
-      this.cameras.main.fade(400, 0, 0, 0);
-      this.time.delayedCall(430, () => {
-        this.scene.start('GameOverScene', {
-          score: stats.score,
-          machinesFixed: stats.machinesFixed,
-          level: this.levelManager.level,
-          maxCombo: stats.maxCombo,
-          xp: stats.xp,
-          streak: stats.streak,
-          perfectMachines: stats.perfectMachines,
-          dailyAchieved,
-          dailyTarget: this.dailyManager.dailyTarget,
-          totalXP: this.upgradeManager.totalXP,
-        });
-      });
-    });
-  }
-
-  // ─── MAIN LOOP ──────────────────────────────────────────────────────────────
-
-  update(time, delta) {
-    if (!this.gameRunning || this.paused) return;
-
-    this.elapsedMs += delta;
-    
-    // Belt speed with all modifiers
-    const baseBeltSpeed = this.levelManager.getBeltSpeed();
-    const envSpeed = this.envManager.getBeltSpeed(baseBeltSpeed);
-    const beltSpeed = this.freezeActive ? 0 : this.slowmoActive ? envSpeed * 0.4 : envSpeed;
-
-    this.conveyorBelt.update(delta, beltSpeed);
-
-    // Environment events
-    const envEvt = this.envManager.update(this.elapsedMs, this.levelManager.level);
-
-    // Distance-based spawning (length of path used for more accurate spacing)
-    const pathLength = this.beltPath.getLength();
-    this.distanceSinceLastSpawn += beltSpeed * (delta / 1000);
-    const spawnThreshold = this.levelManager.getSpawnInterval() * (baseBeltSpeed / 1000) * 0.85;
-    this.requiredDistance = Math.max(spawnThreshold, 280);
-
-    if (this.distanceSinceLastSpawn >= this.requiredDistance) {
-      this.spawnMachine();
-      this.distanceSinceLastSpawn = 0;
-    }
-
-    this.machines.forEach(machine => {
-      // Machines follow the belt path
-      machine.followPath(this.beltPath, beltSpeed, delta);
-      
-      // Urgent warning if near the end of the belt
-      if (!machine.isFixed) {
-          machine.setUrgent(machine.pathProgress > 0.75);
-      }
-    });
-
-    // Cleanup machines that reached the end
-    const machinesLost = this.machines.filter(m => m.isDestroyed && !m.isFixed);
-    machinesLost.forEach(m => this.onMachineLost(m));
-    
-    // Cleanup fixed machines that reached the end (they just disappear)
-    const machinesExit = this.machines.filter(m => m.isDestroyed && m.isFixed);
-    machinesExit.forEach(m => {
-        const idx = this.machines.indexOf(m);
-        if (idx > -1) this.machines.splice(idx, 1);
-        m.destroy();
-    });
-
-    // Update skill cooldowns every 200ms
-    if (Math.floor(time / 200) !== Math.floor((time - delta) / 200)) {
-      this.updateSkillCooldowns(time);
-    }
+    this.upgradeManager.addXP(stats.xp);
+    this.time.delayedCall(1000, () => this.scene.start('GameOverScene', { ...stats, totalXP: this.upgradeManager.totalXP, dailyAchieved: this.dailyManager.dailyCompleted, dailyTarget: this.dailyManager.dailyTarget }));
   }
 }
-
-const TIPS = [
-  'Fix machines early for a SPEED BONUS!',
-  'Build your combo for massive scores.',
-  'Use FREEZE when the belt is crowded.',
-  'Super Wrench auto-fixes the nearest machine.',
-  'Watch for EVENT banners — they change scoring!',
-  'POWER SURGE doubles belt speed — use Slow-Mo!',
-  'GOLDEN MACHINE gives 5x score!',
-  'Perfect fixes (no wrong parts) give bonus XP.',
-  'Daily Challenge resets every day.',
-  'Change themes in the Pause menu!',
-];

@@ -7,9 +7,11 @@ export default class Machine extends Phaser.GameObjects.Container {
     this.slots = [];
     this.filledSlots = new Set();
     this.isFixed = false;
+    this.isFixed = false;
     this.isDestroyed = false;
     this.pathProgress = 0; // 0 to 1
 
+    this.setDepth(5); // Explicitly above the belt
     this.build();
     scene.add.existing(this);
   }
@@ -72,11 +74,9 @@ export default class Machine extends Phaser.GameObjects.Container {
       this.slots.push(slot);
     });
 
-    // Drop zone (covers the entire machine for snapping)
-    this.dropZone = this.scene.add.zone(0, 0, mt.bodyWidth + 20, mt.bodyHeight + 20);
-    this.dropZone.setDropZone();
-    this.dropZone.machineRef = this;
-    this.add(this.dropZone);
+    // Drop zone setup — we use the machine body's interactive area for drops
+    this.body.setInteractive({ dropZone: true });
+    this.body.machineRef = this;
   }
 
   createSlot(slotDef) {
@@ -138,6 +138,7 @@ export default class Machine extends Phaser.GameObjects.Container {
 
   markFixed() {
     this.isFixed = true;
+    this.emit('fixed', this);
 
     // Change body color to green
     this.scene.tweens.add({
