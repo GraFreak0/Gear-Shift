@@ -4,21 +4,27 @@ export default class LevelManager {
   constructor() {
     this.machineCount = 0;
     this.level = 1;
-    this.beltSpeed = 28; // px/s
-    this.spawnInterval = 4200; // ms
+    this.beltSpeed = 45; // Increased from 28 (px/s)
+    this.spawnInterval = 3500; // Decreased from 4200 (ms)
   }
 
   onMachineProcessed() {
     this.machineCount++;
 
-    // Level up every 10 machines
-    if (this.machineCount % 10 === 0) {
+    // Level up every 8 machines (faster pace)
+    if (this.machineCount % 8 === 0) {
       this.level++;
-      this.beltSpeed = Math.min(28 + (this.level - 1) * 6, 90);
-      this.spawnInterval = Math.max(4200 - (this.level - 1) * 220, 1800);
+      this.beltSpeed = Math.min(45 + (this.level - 1) * 8, 120);
+      this.spawnInterval = Math.max(3500 - (this.level - 1) * 250, 1500);
       return true; // leveled up
     }
     return false;
+  }
+
+  getPathType() {
+    if (this.level < 4) return 'LINEAR';
+    if (this.level < 8) return 'ZIGZAG';
+    return 'WAVE';
   }
 
   shouldSpawnBoss() {
@@ -28,7 +34,6 @@ export default class LevelManager {
 
   getRandomMachineType() {
     const available = MACHINE_TYPES.filter(mt => mt.minLevel <= this.level);
-    // Weight toward newer types at higher levels
     const weighted = [];
     available.forEach((mt, i) => {
       const weight = i === available.length - 1 ? 3 : (i === available.length - 2 ? 2 : 1);

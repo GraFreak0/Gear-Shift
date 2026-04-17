@@ -8,9 +8,26 @@ export default class Machine extends Phaser.GameObjects.Container {
     this.filledSlots = new Set();
     this.isFixed = false;
     this.isDestroyed = false;
+    this.pathProgress = 0; // 0 to 1
 
     this.build();
     scene.add.existing(this);
+  }
+
+  followPath(path, speed, delta) {
+    if (this.isDestroyed || !path) return;
+    const pathLength = path.getLength();
+    const step = (speed * delta * 0.001) / pathLength;
+    this.pathProgress += step;
+    
+    if (this.pathProgress > 1) {
+      this.isDestroyed = true;
+      this.emit('exit');
+      return;
+    }
+
+    const pos = path.getPoint(this.pathProgress);
+    this.setPosition(pos.x, pos.y);
   }
 
   build() {

@@ -81,8 +81,10 @@ export default class GameScene extends Phaser.Scene {
       }
     } catch (e) { }
 
-    // Environment event hook
     this.envManager.onEvent((evt) => this.handleEnvEvent(evt));
+
+    this.currentPathType = this.levelManager.getPathType();
+    this.beltPath = this.createBeltPath(this.currentPathType);
 
     this.buildBackground(width, height);
     this.buildConveyor(width);
@@ -177,8 +179,30 @@ export default class GameScene extends Phaser.Scene {
   }
 
   buildConveyor(width) {
-    this.conveyorBelt = new ConveyorBelt(this, BELT_Y, width);
-    this.conveyorBelt.setDepth(1);
+    this.conveyorBelt = new ConveyorBelt(this, this.beltPath, this.theme);
+  }
+
+  createBeltPath(type) {
+    const { width } = this.cameras.main;
+    const path = new Phaser.Curves.Path(-150, BELT_Y);
+    
+    if (type === 'ZIGZAG') {
+      path.lineTo(width * 0.25, BELT_Y - 60);
+      path.lineTo(width * 0.5, BELT_Y + 60);
+      path.lineTo(width * 0.75, BELT_Y - 60);
+      path.lineTo(width + 200, BELT_Y);
+    } else if (type === 'WAVE') {
+      path.splineTo([
+        width * 0.2, BELT_Y + 80,
+        width * 0.4, BELT_Y - 80,
+        width * 0.6, BELT_Y + 80,
+        width * 0.8, BELT_Y - 80,
+        width + 200, BELT_Y
+      ]);
+    } else {
+      path.lineTo(width + 200, BELT_Y);
+    }
+    return path;
   }
 
   // ─── PARTS TRAY ─────────────────────────────────────────────────────────────
@@ -501,7 +525,10 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    this.scoreManager.score += (totalGained - result.gained);
+    const extraPoints = (result.gained * (scoreMultiplier - 1)) + repairBonus;
+    if (extraPoints > 0) {
+        this.scoreManager.addBonus(Math.floor(extraPoints));
+    }
     this.updateHUD();
     this.spawnParticles(machine.x, machine.y, this.theme.particleColor, 20);
 
@@ -605,10 +632,10 @@ export default class GameScene extends Phaser.Scene {
     const machineType = this.dailyModifier.bossOnly
       ? (MACHINE_TYPES.find(m => m.id === 'boss_mega') || this.levelManager.getRandomMachineType())
       : this.levelManager.getRandomMachineType();
-    const machine = new Machine(this, SPAWN_X, BELT_Y - 5, machineType);
+    const machine = new Machine(this, 0, 0, machineType);
     machine.setDepth(5);
     this.machines.push(machine);
-    this.tweens.add({ targets: machine, x: SPAWN_X + 50, duration: 300, ease: 'Back.Out' });
+    // Positing handled by followPath starting immediately in update()
     // Idle hum
     this.time.delayedCall(400, () => this.soundManager.playMachineHum(machineType.id));
   }
@@ -711,6 +738,19 @@ export default class GameScene extends Phaser.Scene {
       stroke: '#000000', strokeThickness: 6,
     }).setOrigin(0.5).setDepth(20);
     this.tweens.add({ targets: txt, y: height / 2 - 150, alpha: 0, duration: 1500, ease: 'Quad.Out', onComplete: () => txt.destroy() });
+    
+    // Check for path transition
+    const newType = this.levelManager.getPathType();
+    if (newType !== this.currentPathType) {
+      this.currentPathType = newType;
+      this.beltPath = this.createBeltPath(newType);
+      this.conveyorBelt.setPath(this.beltPath);
+      
+      this.envBanner.setText(`BELT TRANSITION: ${newType}`).setAlpha(1);
+      this.tweens.add({ targets: this.envBanner, alpha: 0, duration: 2500, delay: 1000 });
+      this.soundManager.playBossSpawn(); // warning sound
+    }
+
     this.cameras.main.flash(300, 255, 200, 50, true);
   }
 
@@ -854,9 +894,10 @@ export default class GameScene extends Phaser.Scene {
     const envSpeed = this.envManager.getBeltSpeed(baseBeltSpeed);
     const beltSpeed = this.freezeActive ? 0 : this.slowmoActive ? envSpeed * 0.4 : envSpeed;
 
-    // Distance-based spawning
+    // Distance-based spawning (length of path used for more accurate spacing)
+    const pathLength = this.beltPath.getLength();
     this.distanceSinceLastSpawn += beltSpeed * (delta / 1000);
-    const spawnThreshold = this.levelManager.getSpawnInterval() * (baseBeltSpeed / 1000) * 0.85; // Buffer distance
+    const spawnThreshold = this.levelManager.getSpawnInterval() * (baseBeltSpeed / 1000) * 0.85;
     this.requiredDistance = Math.max(spawnThreshold, 280);
 
     if (this.distanceSinceLastSpawn >= this.requiredDistance) {
@@ -864,16 +905,27 @@ export default class GameScene extends Phaser.Scene {
       this.distanceSinceLastSpawn = 0;
     }
 
-    const toRemove = [];
     this.machines.forEach(machine => {
-      if (machine.isDestroyed) return;
+      // Machines follow the belt path
+      machine.followPath(this.beltPath, beltSpeed, delta);
+      
+      // Urgent warning if near the end of the belt
       if (!machine.isFixed) {
-        machine.x += beltSpeed * (delta / 1000);
-        machine.setUrgent(machine.x > URGENT_THRESHOLD);
+          machine.setUrgent(machine.pathProgress > 0.75);
       }
-      if (!machine.isFixed && machine.x > EXIT_X) toRemove.push(machine);
     });
-    toRemove.forEach(m => this.onMachineLost(m));
+
+    // Cleanup machines that reached the end
+    const machinesLost = this.machines.filter(m => m.isDestroyed && !m.isFixed);
+    machinesLost.forEach(m => this.onMachineLost(m));
+    
+    // Cleanup fixed machines that reached the end (they just disappear)
+    const machinesExit = this.machines.filter(m => m.isDestroyed && m.isFixed);
+    machinesExit.forEach(m => {
+        const idx = this.machines.indexOf(m);
+        if (idx > -1) this.machines.splice(idx, 1);
+        m.destroy();
+    });
 
     // Update skill cooldowns every 200ms
     if (Math.floor(time / 200) !== Math.floor((time - delta) / 200)) {

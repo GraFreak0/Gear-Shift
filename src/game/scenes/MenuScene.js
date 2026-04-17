@@ -132,15 +132,18 @@ export default class MenuScene extends Phaser.Scene {
       fontSize: '11px', fontFamily: 'monospace', color: '#445566',
     }).setOrigin(1, 0);
 
-    // External badges footer (just text, no boxes to reduce clutter)
-    const badgeY = pos.badges;
-    const badges = ['⚙ Phaser', '🐙 Open Source', '▶ Playables', '🌊 Wavedash'];
-    const startX = width / 2 - (badges.length - 1) * 75;
-    badges.forEach((b, i) => {
-      this.add.text(startX + i * 150, badgeY, b, { fontSize: '11px', fontFamily: 'monospace', color: '#445566' }).setOrigin(0.5);
-    });
+    // Credits button
+    const creditBtn = this.add.container(width / 2, pos.badges);
+    const cBg = this.add.rectangle(0, 0, 140, 32, 0x111122, 1).setStrokeStyle(1, 0x334466);
+    const cText = this.add.text(0, 0, 'ℹ️  CREDITS', { fontSize: '12px', fontFamily: 'monospace', color: '#667788' }).setOrigin(0.5);
+    creditBtn.add([cBg, cText]);
+    creditBtn.setSize(140, 32);
+    creditBtn.setInteractive({ useHandCursor: true });
+    creditBtn.on('pointerover', () => cBg.setStrokeStyle(1, 0x556688));
+    creditBtn.on('pointerout', () => cBg.setStrokeStyle(1, 0x334466));
+    creditBtn.on('pointerdown', () => this.showCreditsPanel(width, height));
 
-    this.add.text(width / 2, height - 10, 'Gamedev.js Jam 2026 — Theme: MACHINES', {
+    this.add.text(width / 2, height - 10, 'Version 1.0.0 — Open Source Edition', {
       fontSize: '10px', fontFamily: 'monospace', color: '#334455',
     }).setOrigin(0.5);
   }
@@ -179,6 +182,29 @@ export default class MenuScene extends Phaser.Scene {
   }
 
 
+
+  showCreditsPanel(width, height) {
+    const panel = this.add.container(width / 2, height / 2).setDepth(100);
+    const bg = this.add.rectangle(0, 0, 480, 260, 0x050510, 0.95).setStrokeStyle(2, 0x445577);
+    
+    const title = this.add.text(0, -90, '⚙️ GEARWORKS: CREDITS', { fontSize: '24px', fontFamily: 'monospace', color: '#ffffff', fontWeight: 'bold' }).setOrigin(0.5);
+    const lead = this.add.text(0, -30, 'Lead Developer', { fontSize: '14px', fontFamily: 'monospace', color: '#667788' }).setOrigin(0.5);
+    const creator = this.add.text(0, 0, 'ISAIAH JOHNSON', { fontSize: '32px', fontFamily: 'monospace', color: '#ffcc44', fontWeight: 'bold' }).setOrigin(0.5);
+    const user = this.add.text(0, 35, '@grafreak0', { fontSize: '18px', fontFamily: 'monospace', color: '#88aaff' }).setOrigin(0.5);
+    
+    const desc = this.add.text(0, 80, 'Built with Phaser 3 & Open Source Love\n© 2026 Shift Games', { 
+        fontSize: '12px', fontFamily: 'monospace', color: '#445566', align: 'center' 
+    }).setOrigin(0.5);
+
+    const closeBtn = this.add.text(0, 115, '[ CLOSE ]', { fontSize: '14px', fontFamily: 'monospace', color: '#ffee88' }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    closeBtn.on('pointerdown', () => panel.destroy());
+    closeBtn.on('pointerover', () => closeBtn.setColor('#ffffff'));
+    closeBtn.on('pointerout', () => closeBtn.setColor('#ffee88'));
+
+    panel.add([bg, title, lead, creator, user, desc, closeBtn]);
+    panel.setScale(0);
+    this.tweens.add({ targets: panel, scaleX: 1, scaleY: 1, duration: 250, ease: 'Back.Out' });
+  }
 
   showLeaderboardPanel(width, height) {
     if (this.lbPanel) { this.lbPanel.destroy(); this.lbPanel = null; return; }

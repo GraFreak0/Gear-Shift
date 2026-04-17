@@ -39,6 +39,14 @@ export default class ScoreManager {
     return { gained, streakBonus, speedBonus };
   }
 
+  addBonus(points) {
+    if (points <= 0) return;
+    this.score += points;
+    this._integrity.recordDelta(points);
+    // XP also scales with bonuses
+    this.xp += Math.floor(points / 10);
+  }
+
   onMachineLost() {
     this.lives = Math.max(0, this.lives - 1);
     this.combo = 1;
