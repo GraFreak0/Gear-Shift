@@ -120,30 +120,30 @@ export default class GameScene extends Phaser.Scene {
     
     if (type === 'S_CURVE') {
         path.cubicBezierTo(
-            width * 0.3, this.beltY + 100,
-            width * 0.7, this.beltY - 100,
-            width + 200, this.beltY
+            width * 0.2, this.beltY + 140,
+            width * 0.8, this.beltY - 140,
+            width + 400, this.beltY
         );
     } else if (type === 'ROUNDABOUT') {
         path.lineTo(width * 0.2, this.beltY);
         path.ellipseTo(60, 60, 180, 0, false, 0); // Bottom curve
         path.ellipseTo(60, 60, 0, 180, true, 0);  // Top curve
-        path.lineTo(width + 200, this.beltY);
+        path.lineTo(width + 400, this.beltY);
     } else if (type === 'ZIGZAG') {
       path.lineTo(width * 0.25, this.beltY - 40);
       path.lineTo(width * 0.5, this.beltY + 40);
       path.lineTo(width * 0.75, this.beltY - 40);
-      path.lineTo(width + 200, this.beltY);
+      path.lineTo(width + 400, this.beltY);
     } else if (type === 'CHAOS') {
       path.splineTo([
           width * 0.2, this.beltY + 120,
           width * 0.4, this.beltY - 80,
           width * 0.6, this.beltY + 80,
           width * 0.8, this.beltY - 120,
-          width + 200, this.beltY
+          width + 400, this.beltY
       ]);
     } else {
-      path.lineTo(width + 200, this.beltY);
+      path.lineTo(width + 400, this.beltY);
     }
     return path;
   }

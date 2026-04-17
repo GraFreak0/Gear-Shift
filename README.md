@@ -35,6 +35,32 @@ Master three unique skills to survive the higher levels:
 
 ---
 
+## 🛣️ World & Level Progression
+
+Gearworks features a dynamic difficulty engine that reconfigures the factory floor as you advance. Every **3 levels**, the conveyor belt system undergoes a structural shift:
+
+| Level Range | Path Geometry | Description |
+|:--- |:--- |:--- |
+| **Lv 1 - 3** | **Linear** | Standard horizontal flow. Perfect for building speed bonuses. |
+| **Lv 4 - 6** | **S-Curve** | A broad, sweeping cubic bezier curve that tests spatial awareness. |
+| **Lv 7 - 9** | **Zig-Zag** | Sharp corners and sudden direction changes for high-speed precision. |
+| **Lv 10 - 12**| **Roundabout**| A complex looping path that increases machine density. |
+| **Lv 13+** | **Chaos Mode** | Unpredictable spline paths that change with every new level. |
+
+---
+
+## 🎨 Theme System
+
+The game utilizes a procedural theme engine to modify the environment without external asset dependencies:
+
+1. **🏭 Night Factory**: Standard grid with low-latency particle effects and industrial blue/grey aesthetics.
+2. **🌆 Neon Cyber**: Implements scanline rendering and high-contrast neon glows with increased particle density.
+3. **🌋 Lava Forge**: Overlays a heat-distortion effect and glowing molten particles for a high-intensity feel.
+
+Each theme modifies the **Atmospheric Manager** which controls background gear speeds, ambient light colors, and collision particle properties.
+
+---
+
 ## 🛠️ Tech Stack
 - **Game Engine**: [Phaser 3](https://phaser.io/)
 - **Frontend Framework**: [React](https://reactjs.org/) (for UI components and state)

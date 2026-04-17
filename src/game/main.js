@@ -4,6 +4,7 @@ import MenuScene from './scenes/MenuScene';
 import GameScene from './scenes/GameScene';
 import GameOverScene from './scenes/GameOverScene';
 import HowToPlayScene from './scenes/HowToPlayScene';
+import UsernameScene from './scenes/UsernameScene';
 import UpgradeScene from './scenes/UpgradeScene';
 import { isMobile } from './utils/deviceDetect';
 
@@ -34,7 +35,7 @@ export function initGame(containerId) {
         game.registry.set('platform', mobile ? 'mobile' : 'pc');
       },
     },
-    scene: [BootScene, MenuScene, HowToPlayScene, GameScene, GameOverScene, UpgradeScene],
+    scene: [BootScene, UsernameScene, MenuScene, HowToPlayScene, GameScene, GameOverScene, UpgradeScene],
   };
 
   return new Phaser.Game(config);

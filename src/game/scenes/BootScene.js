@@ -1,4 +1,5 @@
 const Phaser = window.Phaser;
+import LeaderboardManager from '../managers/LeaderboardManager.js';
 
 export default class BootScene extends Phaser.Scene {
   constructor() {
@@ -36,7 +37,14 @@ export default class BootScene extends Phaser.Scene {
 
   create() {
     this.generateTextures();
-    this.scene.start('MenuScene');
+    
+    // Check if user has a username
+    const lb = new LeaderboardManager();
+    if (!lb.getUsername()) {
+        this.scene.start('UsernameScene');
+    } else {
+        this.scene.start('MenuScene');
+    }
   }
 
   generateTextures() {

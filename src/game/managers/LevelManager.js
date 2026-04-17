@@ -4,9 +4,9 @@ export default class LevelManager {
   constructor() {
     this.machineCount = 0;
     this.level = 1;
-    this.baseBeltSpeed = 48; 
+    this.baseBeltSpeed = 44; // Reduced from 48
     this.spawnInterval = 3500; 
-    this.machinesPerLevel = 6; // Faster levels
+    this.machinesPerLevel = 6; 
   }
 
   onMachineProcessed() {
@@ -14,8 +14,9 @@ export default class LevelManager {
 
     if (this.machineCount % this.machinesPerLevel === 0) {
       this.level++;
-      this.baseBeltSpeed = Math.min(48 + (this.level - 1) * 7, 160);
-      this.spawnInterval = Math.max(3500 - (this.level - 1) * 200, 1200);
+      // MUCH slow progression: +3 per level instead of +7
+      this.baseBeltSpeed = Math.min(44 + (this.level - 1) * 3, 140);
+      this.spawnInterval = Math.max(3500 - (this.level - 1) * 150, 1500);
       return true;
     }
     return false;
