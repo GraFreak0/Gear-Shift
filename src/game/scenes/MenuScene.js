@@ -215,12 +215,28 @@ export default class MenuScene extends Phaser.Scene {
         const entries = await this.leaderboardManager.getGlobal();
         loading.destroy();
         if (entries) {
+            const currentName = this.lb.getUsername();
             entries.slice(0, 10).forEach((e, i) => {
-              const y = -panelH / 2 + 80 + i * 30;
+              const y = -panelH / 2 + 80 + i * 32;
+              const isMe = e.username === currentName;
+              
               const name = String(e?.username || 'Anonymous').slice(0, 12);
               const score = Number(e?.score || 0).toLocaleString();
-              const txt = this.add.text(-panelW/2 + 30, y, `${i+1}. ${name.padEnd(14)} ${score.padStart(10)}`, { fontSize: '14px', fontFamily: 'monospace', color: '#fff' });
+              const color = isMe ? '#ffcc44' : '#fff';
+              
+              const txt = this.add.text(-panelW/2 + 30, y, `${i+1}. ${name.padEnd(14)} ${score.padStart(10)} ${isMe ? ' (YOU)' : ''}`, { 
+                  fontSize: isMe ? '16px' : '14px', 
+                  fontFamily: 'monospace', 
+                  color,
+                  fontWeight: isMe ? 'bold' : 'normal'
+              });
               panel.add(txt);
+              
+              if (isMe) {
+                  const highlight = this.add.rectangle(0, y, panelW - 40, 30, 0xffcc44, 0.1).setOrigin(0.5);
+                  panel.add(highlight);
+                  highlight.setDepth(-1);
+              }
             });
         }
     } catch(e) { loading.setText('Offline Mode'); }
